@@ -1,0 +1,143 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"strings"
+	"time"
+
+	"github.com/Yashh56/atlas/internal/session"
+	"github.com/Yashh56/atlas/internal/state"
+)
+
+// GitValidate populates the git block in project.json using local git commands.
+// It reuses RunCommand so there is exactly one code path for shelling out.
+type GitValidate struct {
+	WorkspaceRoot string // path to the project directory
+	GitRoot       string // path returned by workspace.Resolve; "" if not a git repo
+	SessionDir    string // where project.json lives; "" → skip write (unit tests)
+}
+
+// Name returns the canonical tool identifier.
+func (g GitValidate) Name() string { return "git_validate" }
+
+// gitPatch is used to update only the git block of project.json.
+// We load the raw JSON, unmarshal into this partial struct, update git, re-marshal.
+type gitPatch struct {
+	Framework      *string  `json:"framework"`
+	Language       *string  `json:"language"`
+	Runtime        *string  `json:"runtime"`
+	PackageManager *string  `json:"package_manager"`
+	Docker         bool     `json:"docker"`
+	Git            gitBlock `json:"git"`
+}
+
+type gitBlock struct {
+	Branch    *string `json:"branch"`
+	CommitSHA *string `json:"commit_sha"`
+	IsClean   *bool   `json:"is_clean"`
+	Remote    *string `json:"remote"`
+}
+
+// IsCleanResult returns whether git.is_clean was true (false if nil or false).
+// Callers use this to check the dirty-tree policy.
+func IsCleanResult(output string) *bool {
+	switch output {
+	case "is_clean:true":
+		t := true
+		return &t
+	case "is_clean:false":
+		f := false
+		return &f
+	default:
+		return nil
+	}
+}
+
+// Execute shells to local git to fill the four git fields. If GitRoot is empty
+// (not a git repo) all fields are left nil and a one-line warning is logged.
+func (g GitValidate) Execute(ctx context.Context, s *session.Session) (ToolResult, error) {
+	start := time.Now()
+
+	if g.GitRoot == "" {
+		log.Printf("git_validate: workspace %q is not inside a git repository — skipping git fields", g.WorkspaceRoot)
+		return ToolResult{
+			Success:  true,
+			Output:   "no_git_repo",
+			Duration: time.Since(start),
+		}, nil
+	}
+
+	run := func(args ...string) (string, bool) {
+		rc := RunCommand{Command: "git", Args: args, Dir: g.GitRoot}
+		r, _ := rc.Execute(ctx, s)
+		return strings.TrimSpace(r.Output), r.Success
+	}
+
+	var gb gitBlock
+
+	// Branch.
+	if out, ok := run("rev-parse", "--abbrev-ref", "HEAD"); ok && out != "" {
+		v := out
+		gb.Branch = &v
+	}
+
+	// Commit SHA.
+	if out, ok := run("rev-parse", "HEAD"); ok && out != "" {
+		v := out
+		gb.CommitSHA = &v
+	}
+
+	// Is clean? (empty porcelain output ↔ clean)
+	if out, ok := run("status", "--porcelain"); ok {
+		clean := strings.TrimSpace(out) == ""
+		gb.IsClean = &clean
+	}
+
+	// Remote — missing remote is not an error.
+	if out, ok := run("remote", "get-url", "origin"); ok && out != "" {
+		v := out
+		gb.Remote = &v
+	}
+
+	// Persist git block into project.json (merging with existing fields).
+	if g.SessionDir != "" {
+		if err := g.patchProjectGit(gb); err != nil {
+			return ToolResult{
+				Success:  false,
+				Error:    err.Error(),
+				Duration: time.Since(start),
+			}, nil
+		}
+	}
+
+	// Encode is_clean status into Output so orchestrator can read it without
+	// loading project.json again.
+	output := "no_git_info"
+	if gb.IsClean != nil {
+		if *gb.IsClean {
+			output = "is_clean:true"
+		} else {
+			output = "is_clean:false"
+		}
+	}
+
+	return ToolResult{
+		Success:  true,
+		Output:   output,
+		Duration: time.Since(start),
+	}, nil
+}
+
+// patchProjectGit reads project.json, updates only the git block, and saves.
+func (g GitValidate) patchProjectGit(gb gitBlock) error {
+	// Load existing project.json if present; otherwise start fresh.
+	var proj gitPatch
+	data, err := state.LoadJSONBytes(g.SessionDir, "project.json")
+	if err == nil {
+		_ = json.Unmarshal(data, &proj)
+	}
+	proj.Git = gb
+	return state.SaveJSON(g.SessionDir, "project.json", proj)
+}
