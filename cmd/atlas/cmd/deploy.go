@@ -19,12 +19,13 @@ var validProviders = map[string]bool{
 }
 
 var deployProvider string
+var deployAllowDirty bool
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy <path>",
-	Short: "Analyze a project and prepare a deployment session",
-	Long: `deploy resolves the workspace, creates a session, and runs project analysis.
-It does not execute a build or deploy in Week 2 — that is Week 3.`,
+	Short: "Analyze, validate, and build a project for deployment",
+	Long: `deploy resolves the workspace, creates a session, analyzes the project,
+validates git state, and runs the build. Deployment provider integration is Week 4.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := args[0]
@@ -41,12 +42,16 @@ It does not execute a build or deploy in Week 2 — that is Week 3.`,
 			)
 		}
 
-		return orchestrator.Run(cmd.Context(), path, strings.ToLower(deployProvider))
+		opts := orchestrator.RunOptions{
+			AllowDirty: deployAllowDirty,
+		}
+		return orchestrator.Run(cmd.Context(), path, strings.ToLower(deployProvider), opts)
 	},
 }
 
 func init() {
 	deployCmd.Flags().StringVar(&deployProvider, "provider", "", "deployment provider (vercel, render, netlify, fly, railway)")
+	deployCmd.Flags().BoolVar(&deployAllowDirty, "allow-dirty", false, "skip the dirty working-tree check and proceed even with uncommitted changes")
 }
 
 // validProviderList returns a deterministic, human-readable list of valid providers.
