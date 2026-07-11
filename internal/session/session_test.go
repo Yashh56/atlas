@@ -11,7 +11,7 @@ import (
 func TestSession_SaveAndLoad(t *testing.T) {
 	dir := t.TempDir()
 
-	s := session.New("deploy my app", "/tmp/myapp")
+	s := session.New("/tmp/myapp")
 	s.Status = "running"
 
 	if err := s.Save(dir); err != nil {
@@ -29,9 +29,6 @@ func TestSession_SaveAndLoad(t *testing.T) {
 	if loaded.Status != s.Status {
 		t.Errorf("Status mismatch: got %q, want %q", loaded.Status, s.Status)
 	}
-	if loaded.Goal != s.Goal {
-		t.Errorf("Goal mismatch: got %q, want %q", loaded.Goal, s.Goal)
-	}
 	if loaded.Workspace != s.Workspace {
 		t.Errorf("Workspace mismatch: got %q, want %q", loaded.Workspace, s.Workspace)
 	}
@@ -43,7 +40,7 @@ func TestSession_SaveAndLoad(t *testing.T) {
 func TestSession_DoubleSave_NoStrayTmpFile(t *testing.T) {
 	dir := t.TempDir()
 
-	s := session.New("test goal", "/tmp/project")
+	s := session.New("/tmp/project")
 
 	if err := s.Save(dir); err != nil {
 		t.Fatalf("first Save failed: %v", err)
@@ -61,7 +58,6 @@ func TestSession_DoubleSave_NoStrayTmpFile(t *testing.T) {
 		t.Errorf("stray .tmp file found at %s after double Save", tmpPath)
 	}
 
-	// Also verify the final state is the last save.
 	loaded, err := session.Load(dir, s.ID)
 	if err != nil {
 		t.Fatalf("Load after double Save failed: %v", err)

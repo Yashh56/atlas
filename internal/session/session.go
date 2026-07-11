@@ -11,23 +11,22 @@ import (
 	"time"
 )
 
-// Session represents a single Atlas deployment session.
+// Session represents a single Atlas deployment session — identity and lifecycle
+// only. Goal and progress tracking live in planner.json (internal/orchestrator).
 type Session struct {
 	ID        string    `json:"id"`
 	Status    string    `json:"status"` // see internal/state for valid values
-	Goal      string    `json:"goal"`
 	Workspace string    `json:"workspace_path"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // New creates a new Session with a unique ID and status "created".
-func New(goal, workspacePath string) *Session {
+func New(workspacePath string) *Session {
 	now := time.Now().UTC()
 	return &Session{
 		ID:        generateID(),
 		Status:    "created",
-		Goal:      goal,
 		Workspace: workspacePath,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -35,7 +34,6 @@ func New(goal, workspacePath string) *Session {
 }
 
 // Save atomically persists the session to <sessionsDir>/<id>/session.json.
-// It writes to a .tmp file first and then renames to prevent corruption on crash.
 // UpdatedAt is refreshed before writing.
 func (s *Session) Save(sessionsDir string) error {
 	dir := filepath.Join(sessionsDir, s.ID)
@@ -58,7 +56,6 @@ func (s *Session) Save(sessionsDir string) error {
 	}
 
 	if err := os.Rename(tmp, final); err != nil {
-		// Best-effort cleanup of the tmp file.
 		_ = os.Remove(tmp)
 		return fmt.Errorf("session: renaming %s → %s: %w", tmp, final, err)
 	}
@@ -79,6 +76,11 @@ func Load(sessionsDir, id string) (*Session, error) {
 		return nil, fmt.Errorf("session: parsing %s: %w", path, err)
 	}
 	return &s, nil
+}
+
+// SessionDir returns the canonical directory for a session's state files.
+func SessionDir(sessionsDir, id string) string {
+	return filepath.Join(sessionsDir, id)
 }
 
 // generateID returns a unique session ID of the form "sess_<16 hex chars>".
