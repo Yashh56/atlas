@@ -10,15 +10,19 @@ import (
 
 // Config holds the Atlas runtime configuration.
 type Config struct {
-	DefaultModel string `json:"default_model"`
-	Approval     string `json:"approval"` // "manual" | "auto"
+	DefaultModel      string `json:"default_model"`
+	LLMProvider       string `json:"llm_provider"`
+	LocalLLMBaseURL   string `json:"local_llm_base_url"`
+	Approval          string `json:"approval"` // "manual" | "auto"
 }
 
 // defaults returns a Config with sane out-of-the-box values.
 func defaults() *Config {
 	return &Config{
-		DefaultModel: "claude-sonnet-4-6",
-		Approval:     "manual",
+		DefaultModel:      "claude-sonnet-4-6",
+		LLMProvider:       "anthropic",
+		LocalLLMBaseURL:   "http://localhost:11434/v1",
+		Approval:          "manual",
 	}
 }
 
