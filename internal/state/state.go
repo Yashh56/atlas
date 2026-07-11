@@ -58,3 +58,14 @@ func LoadJSON(dir, filename string, v any) error {
 	}
 	return nil
 }
+
+// LoadJSONBytes reads filename from dir and returns the raw bytes.
+// Useful when callers need to partially unmarshal or merge JSON.
+func LoadJSONBytes(dir, filename string) ([]byte, error) {
+	path := filepath.Join(dir, filename)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("state: reading %s: %w", path, err)
+	}
+	return data, nil
+}
