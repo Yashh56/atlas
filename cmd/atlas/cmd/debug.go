@@ -55,8 +55,8 @@ Example:
 			Dir:     debugRunDir,
 		}
 
-		// Create a minimal stub session — the tool doesn't use it in Week 1.
-		stub := session.New("debug", debugRunDir)
+		// Create a minimal stub session — the tool doesn't use it in Week 2.
+		stub := session.New(debugRunDir)
 
 		result, err := rc.Execute(context.Background(), stub)
 		if err != nil {

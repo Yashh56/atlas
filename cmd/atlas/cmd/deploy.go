@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Yashh56/atlas/internal/orchestrator"
 )
 
 // validProviders is the exhaustive list of accepted --provider values.
@@ -20,10 +22,9 @@ var deployProvider string
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy <path>",
-	Short: "Parse and validate a deployment request",
-	Long: `deploy parses and validates a deployment request.
-It does not perform any actual deployment in Week 1 — it verifies the
-provided path and provider arguments and confirms they are understood.`,
+	Short: "Analyze a project and prepare a deployment session",
+	Long: `deploy resolves the workspace, creates a session, and runs project analysis.
+It does not execute a build or deploy in Week 2 — that is Week 3.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := args[0]
@@ -33,18 +34,14 @@ provided path and provider arguments and confirms they are understood.`,
 		}
 
 		if !validProviders[strings.ToLower(deployProvider)] {
-			valid := validProviderList()
 			return fmt.Errorf(
 				"unknown provider %q — valid options are: %s",
 				deployProvider,
-				valid,
+				validProviderList(),
 			)
 		}
 
-		fmt.Printf("Project: %s\n", path)
-		fmt.Printf("Provider: %s\n", strings.ToLower(deployProvider))
-		fmt.Println("✓ Command parsed")
-		return nil
+		return orchestrator.Run(cmd.Context(), path, strings.ToLower(deployProvider))
 	},
 }
 
@@ -52,14 +49,7 @@ func init() {
 	deployCmd.Flags().StringVar(&deployProvider, "provider", "", "deployment provider (vercel, render, netlify, fly, railway)")
 }
 
-// validProviderList returns a human-readable, sorted list of valid providers.
+// validProviderList returns a deterministic, human-readable list of valid providers.
 func validProviderList() string {
-	list := make([]string, 0, len(validProviders))
-	for p := range validProviders {
-		list = append(list, p)
-	}
-	// Deterministic ordering for tests and error messages.
-	sorted := []string{"fly", "netlify", "railway", "render", "vercel"}
-	_ = list
-	return strings.Join(sorted, ", ")
+	return strings.Join([]string{"fly", "netlify", "railway", "render", "vercel"}, ", ")
 }
