@@ -39,10 +39,10 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	}
 	fmt.Println("✓ Workspace resolved")
 
-	// 3. Initialize Provider and LLM Client.
-	llmClient, err := llm.NewClient(cfg)
+	// 3. Initialize Provider and LLM Model.
+	llmModel, err := llm.ResolveModel(cfg)
 	if err != nil {
-		return fmt.Errorf("orchestrator: initializing LLM client: %w", err)
+		return fmt.Errorf("orchestrator: resolving LLM model: %w", err)
 	}
 
 	registry := deploy.NewRegistry()
@@ -199,7 +199,7 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		
 		fixTool := tools.FixCode{
 			WorkspaceRoot: ws.Root,
-			Client:        llmClient,
+			Model:         llmModel,
 			SessionDir:    sessDir,
 		}
 		fixRes, err := fixTool.Execute(ctx, sess)
@@ -211,7 +211,7 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 			fmt.Printf("  %s\n", fixRes.Output)
 			planner.Completed = append(planner.Completed, "fix_code")
 		} else {
-			fmt.Printf("  Fix attempt failed: %s\n", fixRes.Output)
+			fmt.Printf("  Fix attempt failed: %s\n", fixRes.Error)
 			planner.Failed = append(planner.Failed, "fix_code")
 		}
 		_ = SavePlanner(sessDir, planner)

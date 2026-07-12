@@ -2,6 +2,7 @@ package tools_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,16 +10,30 @@ import (
 	"github.com/Yashh56/atlas/internal/session"
 	"github.com/Yashh56/atlas/internal/state"
 	"github.com/Yashh56/atlas/internal/tools"
+	"github.com/zendev-sh/goai/provider"
 )
 
-type fakeLLMClient struct {
+// fakeLanguageModel implements provider.LanguageModel for testing.
+// It returns a canned JSON response for FixResponse.
+type fakeLanguageModel struct {
 	response string
 	err      error
 }
 
-func (f *fakeLLMClient) Name() string { return "fake" }
-func (f *fakeLLMClient) Complete(ctx context.Context, sys, user string) (string, error) {
-	return f.response, f.err
+func (f *fakeLanguageModel) ModelID() string { return "fake-model" }
+
+func (f *fakeLanguageModel) DoGenerate(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &provider.GenerateResult{
+		Text:         f.response,
+		FinishReason: provider.FinishStop,
+	}, nil
+}
+
+func (f *fakeLanguageModel) DoStream(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+	return nil, nil
 }
 
 func TestFixCode_Success(t *testing.T) {
@@ -26,34 +41,26 @@ func TestFixCode_Success(t *testing.T) {
 	sessDir := filepath.Join(ws, ".atlas", "sessions", "test_sess")
 	os.MkdirAll(filepath.Join(sessDir, "logs"), 0o755)
 
-	// Setup context files
 	fw := "go"
 	state.SaveJSON(sessDir, "project.json", map[string]interface{}{
 		"framework": fw,
 	})
-	
+
 	logPath := filepath.Join(sessDir, "logs", "build.log")
 	os.WriteFile(logPath, []byte("main.go:4: syntax error"), 0o644)
 	state.SaveJSON(sessDir, "build.json", map[string]interface{}{
 		"log_path": logPath,
 	})
 
-	// Setup target file
 	os.WriteFile(filepath.Join(ws, "main.go"), []byte("broken code"), 0o644)
 
-	client := &fakeLLMClient{
+	model := &fakeLanguageModel{
 		response: `{"file": "main.go", "content": "fixed code", "reasoning": "fixed it"}`,
 	}
 
-	// We need to create a dummy skills/fix_build.md relative to the test execution path.
-	// Since the test runs in internal/tools, the relative path to repo root is ../../
-	// Wait, the tool looks in skills/fix_build.md OR ../../skills/fix_build.md.
-	// Since we are running `go test ./internal/tools/...`, the working dir is internal/tools.
-	// The tool's fallback path `../../skills/fix_build.md` will naturally find the real skill file!
-	
 	tool := tools.FixCode{
 		WorkspaceRoot: ws,
-		Client:        client,
+		Model:         model,
 		SessionDir:    sessDir,
 	}
 
@@ -62,12 +69,7 @@ func TestFixCode_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !res.Success {
-		t.Fatalf("expected success, got %v: %s", res.Success, res.Error)
-	}
-
-	expectedOutput := `Fixed: main.go — "fixed it"`
-	if res.Output != expectedOutput {
-		t.Errorf("expected %q, got %q", expectedOutput, res.Output)
+		t.Fatalf("expected success, got error: %s", res.Error)
 	}
 
 	content, err := os.ReadFile(filepath.Join(ws, "main.go"))
@@ -79,7 +81,7 @@ func TestFixCode_Success(t *testing.T) {
 	}
 }
 
-func TestFixCode_MalformedJSON(t *testing.T) {
+func TestFixCode_StructuredGenerationError(t *testing.T) {
 	ws := t.TempDir()
 	sessDir := filepath.Join(ws, ".atlas", "sessions", "test_sess")
 	os.MkdirAll(filepath.Join(sessDir, "logs"), 0o755)
@@ -87,31 +89,34 @@ func TestFixCode_MalformedJSON(t *testing.T) {
 	state.SaveJSON(sessDir, "project.json", map[string]interface{}{})
 	state.SaveJSON(sessDir, "build.json", map[string]interface{}{})
 
-	client := &fakeLLMClient{
-		response: `not json`,
+	model := &fakeLanguageModel{
+		err: fmt.Errorf("API rate limit exceeded"),
 	}
-	
+
 	tool := tools.FixCode{
 		WorkspaceRoot: ws,
-		Client:        client,
+		Model:         model,
 		SessionDir:    sessDir,
 	}
 
 	res, err := tool.Execute(context.Background(), &session.Session{})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected Go error: %v", err)
 	}
-	// Malformed JSON should be a clean failure (Success = false, but no error returned from Execute)
-	// Wait, ToolResult has an Error string for errors.
 	if res.Success {
 		t.Fatal("expected failure")
 	}
-	if res.Output != "LLM returned malformed JSON" {
-		t.Errorf("expected malformed JSON output, got %q", res.Output)
+	// This is the blank-error bug fix: Error must be non-empty and descriptive
+	if res.Error == "" {
+		t.Fatal("ToolResult.Error is blank — the blank-error bug is still present")
 	}
+	if res.Error == "structured generation failed: " {
+		t.Fatal("ToolResult.Error has the blank message pattern — fix didn't work")
+	}
+	t.Logf("Error message (correct): %s", res.Error)
 }
 
-func TestFixCode_NullFile(t *testing.T) {
+func TestFixCode_ModelDeclines(t *testing.T) {
 	ws := t.TempDir()
 	sessDir := filepath.Join(ws, ".atlas", "sessions", "test_sess")
 	os.MkdirAll(filepath.Join(sessDir, "logs"), 0o755)
@@ -119,24 +124,25 @@ func TestFixCode_NullFile(t *testing.T) {
 	state.SaveJSON(sessDir, "project.json", map[string]interface{}{})
 	state.SaveJSON(sessDir, "build.json", map[string]interface{}{})
 
-	client := &fakeLLMClient{
-		response: `{"file": null, "content": null, "reasoning": "too hard"}`,
+	model := &fakeLanguageModel{
+		response: `{"file": "", "content": "", "reasoning": "cannot determine the fix"}`,
 	}
-	
+
 	tool := tools.FixCode{
 		WorkspaceRoot: ws,
-		Client:        client,
+		Model:         model,
 		SessionDir:    sessDir,
 	}
 
 	res, err := tool.Execute(context.Background(), &session.Session{})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected Go error: %v", err)
 	}
 	if res.Success {
-		t.Fatal("expected failure")
+		t.Fatal("expected failure when model declines")
 	}
-	if res.Output != "LLM declined to fix: too hard" {
-		t.Errorf("unexpected output: %q", res.Output)
+	if res.Error == "" {
+		t.Fatal("expected non-empty error when model declines")
 	}
+	t.Logf("Decline message: %s", res.Error)
 }
