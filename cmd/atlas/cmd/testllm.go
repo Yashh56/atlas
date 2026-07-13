@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Yashh56/atlas/internal/config"
+	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/llm"
 )
 
@@ -26,7 +27,12 @@ var testllmCmd = &cobra.Command{
 		
 		fmt.Printf("Testing LLM connection to provider: %s (model: %s)...\n", cfg.LLMProvider, cfg.DefaultModel)
 		
-		client, err := llm.NewClient(cfg)
+		store, storeErr := credentials.Open()
+		if storeErr != nil {
+			fmt.Printf("⚠  Could not open credential store: %v\n", storeErr)
+		}
+		
+		client, err := llm.NewClient(cfg, store)
 		if err != nil {
 			return fmt.Errorf("failed to initialize LLM client: %w", err)
 		}

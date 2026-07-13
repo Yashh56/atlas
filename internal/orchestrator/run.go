@@ -40,8 +40,14 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	}
 	fmt.Println("✓ Workspace resolved")
 
-	// 3. Initialize Provider and LLM Model.
-	llmModel, err := llm.ResolveModel(cfg)
+	// 3. Open credential store and run pre-flight auth check for Vercel.
+	store, storeErr := credentials.Open()
+	if storeErr != nil {
+		fmt.Printf("⚠  Could not open credential store: %v — continuing without it\n", storeErr)
+	}
+
+	// 4. Initialize Provider and LLM Model.
+	llmModel, err := llm.ResolveModel(cfg, store)
 	if err != nil {
 		return fmt.Errorf("orchestrator: resolving LLM model: %w", err)
 	}
@@ -54,11 +60,6 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		return fmt.Errorf("orchestrator: provider %q not supported yet", providerName)
 	}
 
-	// 3b. Open credential store and run pre-flight auth check for Vercel.
-	store, storeErr := credentials.Open()
-	if storeErr != nil {
-		fmt.Printf("⚠  Could not open credential store: %v — continuing without it\n", storeErr)
-	}
 	if providerName == "vercel" {
 		fmt.Println("→ Checking Vercel authentication...")
 		if authErr := deploy.EnsureVercelAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {

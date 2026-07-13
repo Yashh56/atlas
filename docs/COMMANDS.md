@@ -58,12 +58,27 @@ atlas providers
 
 **Example output:**
 ```
+$ atlas providers
 DEPLOY PROVIDERS
   vercel     ✓ authenticated   (cli_session, you@example.com, verified 2026-07-13 10:02:00)
   render     ✗ not configured
-  netlify    ✗ not configured
-  fly        ✗ not configured
-  railway    ✗ not configured
+```
+
+**Subcommands:**
+- `atlas providers set <provider>`: Securely store a deployment provider token.
+- `atlas providers unset <provider>`: Remove a stored deployment provider token.
+
+**Example — set a provider:**
+```
+$ atlas providers set vercel
+Vercel token: ████████████████████████████
+✓ Stored. This will be used instead of the CLI-delegated login next time you deploy.
+```
+
+**Example — unset a provider:**
+```
+$ atlas providers unset vercel
+✓ Removed stored key for "vercel".
 ```
 
 **Notes:**
@@ -84,14 +99,28 @@ atlas models
 
 **Example output:**
 ```
+$ atlas models
 LLM PROVIDERS   (active: mistral — from config.json's llm_provider)
-  anthropic  ✓ ANTHROPIC_API_KEY detected
+  anthropic  ✓ stored
   openai     ✗ OPENAI_API_KEY not set
   gemini     ✗ GEMINI_API_KEY not set
-  mistral    ✓ MISTRAL_API_KEY detected
-  groq       ✗ GROQ_API_KEY not set
-  grok       ✗ XAI_API_KEY not set
-  local      –  configured base URL: http://localhost:11434/v1 (not checked — no key needed)
+```
+
+**Subcommands:**
+- `atlas models set <provider>`: Securely store an LLM API key.
+- `atlas models unset <provider>`: Remove a stored LLM API key.
+
+**Example — set a model:**
+```
+$ atlas models set anthropic
+API key for anthropic: ████████████████████████████
+✓ Stored. Run `atlas models` to confirm.
+```
+
+**Example — unset a model:**
+```
+$ atlas models unset anthropic
+✓ Removed stored key for "anthropic".
 ```
 
 **Notes:**
@@ -179,7 +208,13 @@ Atlas automatically loads `.env` from the project's root via `godotenv`.
 VERCEL_TOKEN=<your-vercel-token>
 ```
 
-**Option B — CLI login (interactive):**
+**Option B — CLI interactive setup:**
+```bash
+atlas providers set vercel
+# Prompts for masked input
+```
+
+**Option C — CLI login (interactive callback):**
 ```bash
 atlas deploy ./my-app --provider vercel
 # Atlas will prompt to install/run `vercel login` if needed

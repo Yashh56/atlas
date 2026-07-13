@@ -20,4 +20,6 @@ func init() {
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(testllmCmd)
+	rootCmd.AddCommand(modelsCmd)
+	rootCmd.AddCommand(providersCmd)
 }

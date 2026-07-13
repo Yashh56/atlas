@@ -13,6 +13,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider"
@@ -25,26 +26,61 @@ import (
 	"github.com/zendev-sh/goai/provider/xai"
 
 	"github.com/Yashh56/atlas/internal/config"
+	"github.com/Yashh56/atlas/internal/credentials"
 )
 
 // Model is GoAI's resolved provider handle. Exposed so callers that need
 // structured output (FixCode) can use it directly with GenerateStructured.
 type Model = provider.LanguageModel
 
+// resolveAPIKey tries env vars first, then the credential store.
+func resolveAPIKey(store *credentials.Store, provider, envVar string) (string, error) {
+	if v := os.Getenv(envVar); v != "" {
+		return v, nil
+	}
+	if store != nil {
+		if secret, err := store.GetSecret("llm:" + provider); err == nil && secret != "" {
+			return secret, nil
+		}
+	}
+	return "", fmt.Errorf("no API key for %s — set %s or run `atlas models set %s`", provider, envVar, provider)
+}
+
 // ResolveModel maps Atlas's config.LLMProvider value to a GoAI provider model.
-func ResolveModel(cfg *config.Config) (Model, error) {
+func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
+	// For all non-local providers, resolve the API key (env var or store) and
+	// set it process-locally. This ensures GoAI picks it up without needing to
+	// rely on provider-specific WithAPIKey() constructor options.
 	switch cfg.LLMProvider {
 	case "anthropic":
+		key, err := resolveAPIKey(store, "anthropic", "ANTHROPIC_API_KEY")
+		if err != nil { return nil, err }
+		os.Setenv("ANTHROPIC_API_KEY", key)
 		return anthropic.Chat(cfg.DefaultModel), nil
 	case "openai":
+		key, err := resolveAPIKey(store, "openai", "OPENAI_API_KEY")
+		if err != nil { return nil, err }
+		os.Setenv("OPENAI_API_KEY", key)
 		return openai.Chat(cfg.DefaultModel), nil
 	case "gemini":
+		key, err := resolveAPIKey(store, "gemini", "GEMINI_API_KEY")
+		if err != nil { return nil, err }
+		os.Setenv("GEMINI_API_KEY", key)
 		return google.Chat(cfg.DefaultModel), nil
 	case "mistral":
+		key, err := resolveAPIKey(store, "mistral", "MISTRAL_API_KEY")
+		if err != nil { return nil, err }
+		os.Setenv("MISTRAL_API_KEY", key)
 		return mistral.Chat(cfg.DefaultModel), nil
 	case "groq":
+		key, err := resolveAPIKey(store, "groq", "GROQ_API_KEY")
+		if err != nil { return nil, err }
+		os.Setenv("GROQ_API_KEY", key)
 		return groq.Chat(cfg.DefaultModel), nil
 	case "grok":
+		key, err := resolveAPIKey(store, "grok", "XAI_API_KEY")
+		if err != nil { return nil, err }
+		os.Setenv("XAI_API_KEY", key)
 		return xai.Chat(cfg.DefaultModel), nil
 	case "local":
 		return compat.Chat(cfg.DefaultModel, compat.WithBaseURL(cfg.LocalLLMBaseURL)), nil
@@ -64,8 +100,8 @@ type goaiClient struct {
 	model        Model
 }
 
-func NewClient(cfg *config.Config) (Client, error) {
-	model, err := ResolveModel(cfg)
+func NewClient(cfg *config.Config, store *credentials.Store) (Client, error) {
+	model, err := ResolveModel(cfg, store)
 	if err != nil {
 		return nil, err
 	}

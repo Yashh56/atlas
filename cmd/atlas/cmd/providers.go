@@ -18,8 +18,27 @@ var providersCmd = &cobra.Command{
 	RunE:  runProviders,
 }
 
+var providersSetCmd = &cobra.Command{
+	Use:   "set <provider>",
+	Short: "Securely store a deployment provider token",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProvidersSet,
+}
+
+var providersUnsetCmd = &cobra.Command{
+	Use:   "unset <provider>",
+	Short: "Remove a stored deployment provider token",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runProvidersUnset,
+}
+
+func init() {
+	providersCmd.AddCommand(providersSetCmd)
+	providersCmd.AddCommand(providersUnsetCmd)
+}
+
 func runProviders(_ *cobra.Command, _ []string) error {
-	store, err := credentials.Open()
+	store, err := openCredentials()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠  Could not open credential store: %v\n", err)
 		store = nil
@@ -61,4 +80,66 @@ func printProviderStatus(name, envVar string, store *credentials.Store) {
 
 	// 3. Not configured.
 	fmt.Printf("  %s%s✗ not configured\n", name, pad)
+}
+
+func runProvidersSet(_ *cobra.Command, args []string) error {
+	provider := args[0]
+	if provider != "vercel" {
+		return fmt.Errorf("provider %q is not implemented yet", provider)
+	}
+
+	key, err := promptSecret(fmt.Sprintf("%s token", strings.Title(provider)))
+	if err != nil {
+		return err
+	}
+
+	store, err := openCredentials()
+	if err != nil {
+		return fmt.Errorf("opening credential store: %w", err)
+	}
+
+	if err := store.SetSecret(provider, key); err != nil {
+		return fmt.Errorf("storing secret: %w", err)
+	}
+
+	if err := store.SetMeta(credentials.ProviderCredential{
+		Provider:   provider,
+		Method:     credentials.MethodStoredToken,
+		VerifiedAt: time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("storing metadata: %w", err)
+	}
+
+	fmt.Println("✓ Stored. This will be used instead of the CLI-delegated login next time you deploy.")
+	return nil
+}
+
+func runProvidersUnset(_ *cobra.Command, args []string) error {
+	provider := args[0]
+	if provider != "vercel" {
+		return fmt.Errorf("provider %q is not implemented yet", provider)
+	}
+
+	store, err := openCredentials()
+	if err != nil {
+		return fmt.Errorf("opening credential store: %w", err)
+	}
+
+	meta, ok, _ := store.GetMeta(provider)
+	if !ok || meta.Method != credentials.MethodStoredToken {
+		fmt.Printf("No stored key found for %q\n", provider)
+		return nil
+	}
+
+	if err := store.DeleteSecret(provider); err != nil {
+		return fmt.Errorf("deleting secret: %w", err)
+	}
+
+	store.SetMeta(credentials.ProviderCredential{
+		Provider: provider,
+		Method:   credentials.MethodEnvVar,
+	})
+
+	fmt.Printf("✓ Removed stored key for %q.\n", provider)
+	return nil
 }
