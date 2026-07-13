@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Yashh56/atlas/internal/config"
+	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/deploy"
 	"github.com/Yashh56/atlas/internal/llm"
 	"github.com/Yashh56/atlas/internal/session"
@@ -52,6 +53,19 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	if !ok {
 		return fmt.Errorf("orchestrator: provider %q not supported yet", providerName)
 	}
+
+	// 3b. Open credential store and run pre-flight auth check for Vercel.
+	store, storeErr := credentials.Open()
+	if storeErr != nil {
+		fmt.Printf("⚠  Could not open credential store: %v — continuing without it\n", storeErr)
+	}
+	if providerName == "vercel" {
+		fmt.Println("→ Checking Vercel authentication...")
+		if authErr := deploy.EnsureVercelAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
+			return fmt.Errorf("Vercel auth failed: %w", authErr)
+		}
+	}
+
 
 	// 4. Create session + context files.
 	sessionsDir := filepath.Join(ws.Root, ".atlas", "sessions")
