@@ -12,112 +12,191 @@ import (
 	"github.com/Yashh56/atlas/internal/deploy"
 	"github.com/Yashh56/atlas/internal/llm"
 	"github.com/Yashh56/atlas/internal/session"
+	"github.com/Yashh56/atlas/internal/state"
 	"github.com/Yashh56/atlas/internal/tools"
 	"github.com/Yashh56/atlas/internal/workspace"
+	"github.com/charmbracelet/lipgloss"
+)
+
+var (
+	styleCheck = lipgloss.NewStyle().Foreground(lipgloss.Color("46")).Bold(true).Render("✓")
+	styleArrow = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("→")
+	styleCross = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true).Render("✗")
+	styleWarn  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("⚠")
+)
+
+// Action defines the sequence of operations for the pipeline.
+type Action string
+
+const (
+	ActionBuild         Action = "build"           // analyze → git validate → build, stop
+	ActionTest          Action = "test"            // ...→ build → run tests, stop
+	ActionDeploy        Action = "deploy"          // ...→ build → fix loop → deploy (today's default)
+	ActionTestAndDeploy Action = "test-and-deploy" // ...→ build → fix loop → run tests → deploy
 )
 
 // RunOptions carries per-invocation flags from the CLI into the pipeline.
 type RunOptions struct {
-	AllowDirty bool
+	AllowDirty    bool
+	ModelOverride string
+	Action        Action
 }
 
-// Run executes the full Atlas pipeline.
+// Run executes the full Atlas pipeline by dispatching to modular steps.
 func Run(ctx context.Context, workspacePath, providerName string, opts RunOptions) error {
-	// 1. Load config.
-	cfg, err := config.Load(filepath.Join(workspacePath, ".atlas", "config.json"))
+	cfg, ws, sess, sessDir, llmModel, provider, dep, err := executeSetup(ctx, workspacePath, providerName, opts)
 	if err != nil {
-		return fmt.Errorf("orchestrator: loading config: %w", err)
+		return err
 	}
-	fmt.Println("✓ Config loaded")
 
-	// 2. Resolve workspace.
-	ws, err := workspace.Resolve(workspacePath)
+	planner := NewPlanner("deploy")
+	_ = SavePlanner(sessDir, planner)
+
+	commitSHA, framework, packageManager, err := executeAnalyzeAndValidate(ctx, ws, sess, sessDir, planner, opts)
 	if err != nil {
-		return fmt.Errorf("orchestrator: resolving workspace: %w", err)
+		return err
+	}
+
+	err = executeBuildLoop(ctx, ws, sess, sessDir, planner, llmModel, commitSHA, framework, packageManager, opts)
+	if err != nil {
+		return err
+	}
+
+	if opts.Action == ActionBuild {
+		fmt.Printf("%s Action 'build' complete. Stopping before tests or deploy.\n", styleCheck)
+		planner.CurrentStep = "done"
+		_ = SavePlanner(sessDir, planner)
+		return nil
+	}
+
+	if opts.Action == ActionTest || opts.Action == ActionTestAndDeploy {
+		err = executeTests(ctx, ws, sess, sessDir, planner, framework, packageManager, opts)
+		if err != nil {
+			return err
+		}
+		if opts.Action == ActionTest {
+			fmt.Printf("%s Action 'test' complete. Stopping before deploy.\n", styleCheck)
+			planner.CurrentStep = "done"
+			_ = SavePlanner(sessDir, planner)
+			return nil
+		}
+	}
+
+	return executeDeploy(ctx, ws, sessDir, planner, cfg, dep, provider, providerName)
+}
+
+func executeSetup(ctx context.Context, workspacePath, providerName string, opts RunOptions) (
+	cfg *config.Config,
+	ws *workspace.Workspace,
+	sess *session.Session,
+	sessDir string,
+	llmModel llm.Model,
+	provider deploy.Provider,
+	dep *DeploymentState,
+	err error,
+) {
+	cfg, err = config.Load(filepath.Join(workspacePath, ".atlas", "config.json"))
+	if err != nil {
+		err = fmt.Errorf("orchestrator: loading config: %w", err)
+		return
+	}
+	fmt.Printf("%s Config loaded\n", styleCheck)
+
+	ws, err = workspace.Resolve(workspacePath)
+	if err != nil {
+		err = fmt.Errorf("orchestrator: resolving workspace: %w", err)
+		return
 	}
 	if !ws.Exists {
-		return fmt.Errorf("orchestrator: workspace path %q does not exist", workspacePath)
+		err = fmt.Errorf("orchestrator: workspace path %q does not exist", workspacePath)
+		return
 	}
-	fmt.Println("✓ Workspace resolved")
+	fmt.Printf("%s Workspace resolved\n\n", styleCheck)
 
-	// 3. Open credential store and run pre-flight auth check for Vercel.
 	store, storeErr := credentials.Open()
 	if storeErr != nil {
-		fmt.Printf("⚠  Could not open credential store: %v — continuing without it\n", storeErr)
+		fmt.Printf("%s Could not open credential store: %v — continuing without it\n\n", styleWarn, storeErr)
 	}
 
-	// 4. Initialize Provider and LLM Model.
-	llmModel, err := llm.ResolveModel(cfg, store)
+	if opts.ModelOverride != "" {
+		cfg.LLMProvider = opts.ModelOverride
+	}
+	llmModel, err = llm.ResolveModel(cfg, store)
 	if err != nil {
-		return fmt.Errorf("orchestrator: resolving LLM model: %w", err)
+		err = fmt.Errorf("orchestrator: resolving LLM model: %w", err)
+		return
 	}
 
 	registry := deploy.NewRegistry()
 	registry.Register(&deploy.VercelProvider{})
 	
-	provider, ok := registry.Get(providerName)
+	var ok bool
+	provider, ok = registry.Get(providerName)
 	if !ok {
-		return fmt.Errorf("orchestrator: provider %q not supported yet", providerName)
+		err = fmt.Errorf("orchestrator: provider %q not supported yet", providerName)
+		return
 	}
 
 	if providerName == "vercel" {
-		fmt.Println("→ Checking Vercel authentication...")
+		fmt.Printf("%s Checking Vercel authentication...\n", styleArrow)
 		if authErr := deploy.EnsureVercelAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
-			return fmt.Errorf("Vercel auth failed: %w", authErr)
+			err = fmt.Errorf("Vercel auth failed: %w", authErr)
+			return
 		}
 	}
 
-
-	// 4. Create session + context files.
 	sessionsDir := filepath.Join(ws.Root, ".atlas", "sessions")
-	sess := session.New(ws.Root)
-	if err := sess.Save(sessionsDir); err != nil {
-		return fmt.Errorf("orchestrator: saving session: %w", err)
+	sess = session.New(ws.Root)
+	if err = sess.Save(sessionsDir); err != nil {
+		err = fmt.Errorf("orchestrator: saving session: %w", err)
+		return
 	}
 
-	sessDir := session.SessionDir(sessionsDir, sess.ID)
-	planner := NewPlanner("deploy")
-	_ = SavePlanner(sessDir, planner)
+	sessDir = session.SessionDir(sessionsDir, sess.ID)
 	
-	dep := NewDeployment(providerName)
+	dep = NewDeployment(providerName)
 	_ = SaveDeployment(sessDir, dep)
 	_ = SaveProject(sessDir, &ProjectState{})
 
-	fmt.Printf("✓ Session created (%s)\n", sess.ID)
+	fmt.Printf("%s Session created (%s)\n\n", styleCheck, sess.ID)
+	return
+}
 
-	// 5. Analyze project.
+func executeAnalyzeAndValidate(
+	ctx context.Context, ws *workspace.Workspace, sess *session.Session, 
+	sessDir string, planner *PlannerState, opts RunOptions,
+) (*string, string, string, error) {
+
 	planner.CurrentStep = "analyze_project"
 	analyzeTool := tools.AnalyzeProject{WorkspaceRoot: ws.Root, SessionDir: sessDir}
 	analyzeResult, err := analyzeTool.Execute(ctx, sess)
 	if err != nil {
-		return fmt.Errorf("orchestrator: analyze_project: %w", err)
+		return nil, "", "", fmt.Errorf("orchestrator: analyze_project: %w", err)
 	}
 	if analyzeResult.Success {
-		fmt.Printf("✓ Project analyzed → %s\n", analyzeResult.Output)
+		fmt.Printf("%s Project analyzed → %s\n\n", styleCheck, analyzeResult.Output)
 		planner.Completed = append(planner.Completed, "analyze_project")
 	}
 
-	// 6. Git validate.
 	planner.CurrentStep = "git_validate"
 	gitTool := tools.GitValidate{WorkspaceRoot: ws.Root, GitRoot: ws.GitRoot, SessionDir: sessDir}
 	gitResult, err := gitTool.Execute(ctx, sess)
 	if err != nil {
-		return fmt.Errorf("orchestrator: git_validate: %w", err)
+		return nil, "", "", fmt.Errorf("orchestrator: git_validate: %w", err)
 	}
 
 	if gitResult.Success && gitResult.Output != "no_git_repo" {
-		fmt.Printf("✓ Git validated → %s\n", gitResult.Output)
+		fmt.Printf("%s Git validated → %s\n\n", styleCheck, gitResult.Output)
 		planner.Completed = append(planner.Completed, "git_validate")
 
 		if gitResult.Output == "is_clean:false" && !opts.AllowDirty {
 			_ = SavePlanner(sessDir, planner)
-			return fmt.Errorf("✗ Working tree has uncommitted changes. Commit or stash them, or re-run with --allow-dirty")
+			return nil, "", "", fmt.Errorf("Working tree has uncommitted changes. Commit or stash them, or re-run with --allow-dirty")
 		}
 	} else if gitResult.Success && gitResult.Output == "no_git_repo" {
-		fmt.Println("⚠ Git: workspace is not inside a git repository — skipping git validation")
+		fmt.Printf("%s Git: workspace is not inside a git repository — skipping git validation\n\n", styleWarn)
 	}
 
-	// Read git commit sha for rollback.
 	var commitSHA *string
 	proj, _ := LoadProject(sessDir)
 	if proj != nil && proj.Git.CommitSHA != nil {
@@ -133,7 +212,13 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		packageManager = *proj.PackageManager
 	}
 
-	// 7. Fix & Rebuild Loop.
+	return commitSHA, framework, packageManager, nil
+}
+
+func executeBuildLoop(
+	ctx context.Context, ws *workspace.Workspace, sess *session.Session, sessDir string, 
+	planner *PlannerState, llmModel llm.Model, commitSHA *string, framework, packageManager string, opts RunOptions,
+) error {
 	buildSuccess := false
 	for {
 		planner.CurrentStep = "run_build_command"
@@ -163,14 +248,13 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 			
 			retry := planner.Retries["fix_and_rebuild"]
 			if retry.Count > 0 {
-				fmt.Printf("✓ Build succeeded after %d fix attempt(s) (%.1fs)\n", retry.Count, durationSec)
+				fmt.Printf("%s Build succeeded after %d fix attempt(s) (%.1fs)\n\n", styleCheck, retry.Count, durationSec)
 			} else {
-				fmt.Printf("✓ Build succeeded (%.1fs) → %s\n", durationSec, buildResult.Output)
+				fmt.Printf("%s Build succeeded (%.1fs) → %s\n\n", styleCheck, durationSec, buildResult.Output)
 			}
 			break
 		}
 
-		// Build failed.
 		retry := planner.Retries["fix_and_rebuild"]
 		retry.Count++
 		planner.Retries["fix_and_rebuild"] = retry
@@ -187,16 +271,15 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		planner.Error = ErrorInfo{Step: &step, Message: &errorMsg, OccurredAt: &now}
 		_ = SavePlanner(sessDir, planner)
 
-		fmt.Printf("✗ Build failed (attempt %d/%d, %.1fs) → %s\n", retry.Count, retry.Max, durationSec, buildResult.Output)
+		fmt.Printf("%s Build failed (attempt %d/%d, %.1fs) → %s\n", styleCross, retry.Count, retry.Max, durationSec, buildResult.Output)
 
 		if commitSHA == nil {
-			fmt.Println("No git repository detected. Skipping automatic fix to avoid unsafe writes.")
+			fmt.Printf("%s No git repository detected. Skipping automatic fix to avoid unsafe writes.\n", styleWarn)
 			break
 		}
 
 		if retry.Count > retry.Max {
-			fmt.Println("→ Exhausted retries. Escalating and reverting changes...")
-			// Revert
+			fmt.Printf("%s Exhausted retries. Escalating and reverting changes...\n", styleArrow)
 			revertCmd := tools.RunCommand{
 				Command: "git",
 				Args:    []string{"checkout", *commitSHA, "--", "."},
@@ -208,7 +291,7 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 			return fmt.Errorf("build failed and exhausted fix attempts. reverted to commit %s", *commitSHA)
 		}
 
-		fmt.Println("→ Attempting automatic fix...")
+		fmt.Printf("%s Attempting automatic fix...\n", styleArrow)
 		planner.CurrentStep = "fix_code"
 		_ = SavePlanner(sessDir, planner)
 		
@@ -223,29 +306,71 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		}
 
 		if fixRes.Success {
-			fmt.Printf("  %s\n", fixRes.Output)
+			fmt.Printf("  %s\n\n", fixRes.Output)
 			planner.Completed = append(planner.Completed, "fix_code")
 		} else {
-			fmt.Printf("  Fix attempt failed: %s\n", fixRes.Error)
+			fmt.Printf("  Fix attempt failed: %s\n\n", fixRes.Error)
 			planner.Failed = append(planner.Failed, "fix_code")
 		}
 		_ = SavePlanner(sessDir, planner)
-		fmt.Println("→ Rebuilding...")
+		fmt.Printf("%s Rebuilding...\n", styleArrow)
 	}
 
 	if !buildSuccess {
-		return fmt.Errorf("deployment aborted due to build failure")
+		return fmt.Errorf("action %q aborted due to build failure", opts.Action)
 	}
+	return nil
+}
 
-	// 8. Approval Gate.
+func executeTests(
+	ctx context.Context, ws *workspace.Workspace, sess *session.Session, 
+	sessDir string, planner *PlannerState, framework, packageManager string, opts RunOptions,
+) error {
+	planner.CurrentStep = "run_tests"
+	_ = SavePlanner(sessDir, planner)
+	
+	fmt.Printf("%s Running tests...\n", styleArrow)
+	testTool := tools.RunTests{
+		WorkspaceRoot:  ws.Root,
+		Framework:      framework,
+		PackageManager: packageManager,
+		SessionDir:     sessDir,
+	}
+	testResult, testErr := testTool.Execute(ctx, sess)
+	if testErr != nil {
+		return fmt.Errorf("orchestrator: run_tests: %w", testErr)
+	}
+	
+	var ts struct {
+		DurationMs int64 `json:"duration_ms"`
+	}
+	_ = state.LoadJSON(sessDir, "test.json", &ts)
+	durationSec := float64(ts.DurationMs) / 1000.0
+
+	if testResult.Success {
+		fmt.Printf("%s Tests passed (%.1fs) → %s\n\n", styleCheck, durationSec, testResult.Output)
+		planner.Completed = append(planner.Completed, "run_tests")
+		_ = SavePlanner(sessDir, planner)
+	} else {
+		fmt.Printf("%s Tests failed (%.1fs) → %s\n", styleCross, durationSec, testResult.Output)
+		planner.Failed = append(planner.Failed, "run_tests")
+		_ = SavePlanner(sessDir, planner)
+		return fmt.Errorf("action %q aborted due to test failure", opts.Action)
+	}
+	return nil
+}
+
+func executeDeploy(
+	ctx context.Context, ws *workspace.Workspace, sessDir string, planner *PlannerState, 
+	cfg *config.Config, dep *DeploymentState, provider deploy.Provider, providerName string,
+) error {
 	approved := CheckApproval(cfg, dep, os.Stdin, os.Stdout)
 	if !approved {
 		fmt.Println("\nDeployment cancelled by user.")
 		return nil
 	}
 
-	// 9. Deploy.
-	fmt.Printf("→ Deploying to %s (%s)...\n", providerName, dep.Environment)
+	fmt.Printf("%s Deploying to %s (%s)...\n", styleArrow, providerName, dep.Environment)
 	planner.CurrentStep = "deploy"
 	_ = SavePlanner(sessDir, planner)
 
@@ -266,6 +391,6 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	planner.CurrentStep = "done"
 	_ = SavePlanner(sessDir, planner)
 
-	fmt.Printf("\n✓ Deployed successfully to %s\n", deployRes.URL)
+	fmt.Printf("\n%s Deployed successfully to %s\n\n", styleCheck, deployRes.URL)
 	return nil
 }
