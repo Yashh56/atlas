@@ -88,7 +88,21 @@ go 1.22
 			},
 			wantFramework: nil,
 			wantLanguage:  nil,
-			wantPM:        nil,
+			wantPM:        ptr("npm"),
+			wantDocker:    false,
+		},
+		{
+			name: "generic node project with build script",
+			setup: func(dir string) {
+				writeFixture(t, dir, "package.json", `{
+					"scripts": {"build": "tsc"},
+					"dependencies": {},
+					"devDependencies": {}
+				}`)
+			},
+			wantFramework: ptr("node"),
+			wantLanguage:  ptr("javascript"),
+			wantPM:        ptr("npm"),
 			wantDocker:    false,
 		},
 	}

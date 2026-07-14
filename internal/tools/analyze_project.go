@@ -127,6 +127,9 @@ func (a AnalyzeProject) detectJS(
 	case entrySet["package-lock.json"]:
 		pm := "npm"
 		proj.PackageManager = &pm
+	default:
+		pm := "npm"
+		proj.PackageManager = &pm
 	}
 
 	return proj
@@ -135,6 +138,7 @@ func (a AnalyzeProject) detectJS(
 type pkgJSON struct {
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies"`
+	Scripts         map[string]string `json:"scripts"`
 }
 
 func parsePackageJSON(content string, proj *projectData) *projectData {
@@ -167,6 +171,11 @@ func parsePackageJSON(content string, proj *projectData) *projectData {
 			proj.Framework = &name
 			break
 		}
+	}
+
+	if proj.Framework == nil && pkg.Scripts["build"] != "" {
+		fw := "node"
+		proj.Framework = &fw
 	}
 
 	return proj

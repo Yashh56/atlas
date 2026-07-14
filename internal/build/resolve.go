@@ -15,7 +15,7 @@ import "fmt"
 //	go                       → go build ./...
 func ResolveBuildCommand(framework, packageManager string) (string, []string, error) {
 	switch framework {
-	case "nextjs", "react", "express":
+	case "nextjs", "react", "express", "node":
 		switch packageManager {
 		case "pnpm":
 			return "pnpm", []string{"build"}, nil
@@ -28,7 +28,40 @@ func ResolveBuildCommand(framework, packageManager string) (string, []string, er
 		}
 	case "go":
 		return "go", []string{"build", "./..."}, nil
+	case "unknown", "":
+		return "", nil, nil
 	default:
 		return "", nil, fmt.Errorf("don't know how to build framework: %q", framework)
+	}
+}
+
+// ResolveTestCommand returns the command and arguments to run tests for the project
+// based on its detected framework and package manager.
+//
+// Supported combinations:
+//
+//	nextjs / react + pnpm    → pnpm test
+//	nextjs / react + yarn    → yarn test
+//	nextjs / react + npm/""  → npm test
+//	go                       → go test ./...
+func ResolveTestCommand(framework, packageManager string) (string, []string, error) {
+	switch framework {
+	case "nextjs", "react", "express", "node":
+		switch packageManager {
+		case "pnpm":
+			return "pnpm", []string{"test"}, nil
+		case "yarn":
+			return "yarn", []string{"test"}, nil
+		case "npm", "":
+			return "npm", []string{"test"}, nil
+		default:
+			return "npm", []string{"test"}, nil
+		}
+	case "go":
+		return "go", []string{"test", "./..."}, nil
+	case "unknown", "":
+		return "", nil, nil
+	default:
+		return "", nil, fmt.Errorf("don't know how to test framework: %q", framework)
 	}
 }

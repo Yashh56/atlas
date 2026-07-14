@@ -52,6 +52,14 @@ func (r RunBuildCommand) Execute(ctx context.Context, s *session.Session) (ToolR
 		}, nil
 	}
 
+	if cmdBin == "" {
+		return ToolResult{
+			Success:  true,
+			Output:   "no build required",
+			Duration: time.Since(startedAt),
+		}, nil
+	}
+
 	commandStr := cmdBin + " " + strings.Join(cmdArgs, " ")
 
 	// Prepare log file.
