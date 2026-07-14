@@ -17,8 +17,12 @@ atlas deploy <path> [flags]
 **Flags:**
 | Flag | Description |
 |------|-------------|
-| `--provider <name>` | Deployment provider: `vercel`, `render`, `netlify`, `fly`, `railway` (required) |
+| `--provider <name>` | Deployment provider: `vercel`, `render`, `netlify`, `fly`, `railway` (optional if using interactive wizard) |
+| `--model <name>` | LLM provider override (e.g., `anthropic`, `openai`) (optional) |
+| `--action <mode>` | Action mode: `build`, `test`, `deploy`, `test-and-deploy` (default: `deploy`) |
 | `--allow-dirty` | Skip the uncommitted-changes check and proceed anyway |
+
+*Note: Running `atlas deploy <path>` interactively without `--provider` or `--model` flags will launch a terminal wizard to guide you through selecting a model, setting credentials, choosing a provider, and picking an action.*
 
 **Example — successful deploy:**
 ```
