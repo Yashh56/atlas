@@ -22,10 +22,10 @@ const (
 	stepLoading wizardStep = iota
 	stepModelSelect
 	stepModelInput
+	stepActionSelect
 	stepProviderSelect
 	stepVercelConfirm
 	stepVercelInput
-	stepActionSelect
 	stepDone
 )
 
@@ -33,23 +33,24 @@ type wizardModel struct {
 	step wizardStep
 	err  error
 
-	// Store for credentials check/save
 	store *credentials.Store
 
-	// Selections
 	selectedModel    string
-	selectedProvider string
 	selectedAction   orchestrator.Action
+	selectedProvider string
 
-	// UI Components
+	width  int
+	height int
+
 	spinner   spinner.Model
 	list      list.Model
 	textInput textinput.Model
 }
 
 type initCompleteMsg struct{}
+type advanceStepMsg struct{}
 
-func RunWizard() (string, string, orchestrator.Action, error) {
+func RunWizard(modelFlag string, actionFlag orchestrator.Action, providerFlag string) (string, orchestrator.Action, string, error) {
 	store, _ := credentials.Open()
 
 	s := spinner.New()
@@ -57,12 +58,14 @@ func RunWizard() (string, string, orchestrator.Action, error) {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	m := wizardModel{
-		step:    stepLoading,
-		store:   store,
-		spinner: s,
+		step:             stepLoading,
+		store:            store,
+		spinner:          s,
+		selectedModel:    modelFlag,
+		selectedAction:   actionFlag,
+		selectedProvider: providerFlag,
 	}
 
-	m.list = createModelList(store)
 	m.textInput = textinput.New()
 	m.textInput.EchoMode = textinput.EchoPassword
 	m.textInput.Focus()
@@ -81,7 +84,7 @@ func RunWizard() (string, string, orchestrator.Action, error) {
 		return "", "", "", fmt.Errorf("wizard aborted")
 	}
 
-	return res.selectedModel, res.selectedProvider, res.selectedAction, nil
+	return res.selectedModel, res.selectedAction, res.selectedProvider, nil
 }
 
 func openBrowser(url string) error {
@@ -102,13 +105,41 @@ func (m *wizardModel) Init() tea.Cmd {
 		textinput.Blink,
 		m.spinner.Tick,
 		func() tea.Msg {
-			// Simulate a short loading delay for the "proper loader" requirement
 			importTime := 600 * 1000 * 1000 // 600ms
 			for i := 0; i < importTime; i++ {
 			}
 			return initCompleteMsg{}
 		},
 	)
+}
+
+func (m *wizardModel) nextStep() tea.Cmd {
+	if m.selectedModel == "" {
+		m.step = stepModelSelect
+		m.list = createModelList(m.store)
+		if m.width > 0 && m.height > 0 {
+			m.list.SetSize(m.width, m.height)
+		}
+		return nil
+	}
+	if m.selectedAction == "" {
+		m.step = stepActionSelect
+		m.list = createActionList()
+		if m.width > 0 && m.height > 0 {
+			m.list.SetSize(m.width, m.height)
+		}
+		return nil
+	}
+	if actionNeedsProvider(m.selectedAction) && m.selectedProvider == "" {
+		m.step = stepProviderSelect
+		m.list = createProviderList(m.store)
+		if m.width > 0 && m.height > 0 {
+			m.list.SetSize(m.width, m.height)
+		}
+		return nil
+	}
+	m.step = stepDone
+	return tea.Quit
 }
 
 func (m *wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -120,12 +151,17 @@ func (m *wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.WindowSizeMsg:
 		h, v := docStyle.GetFrameSize()
-		m.list.SetSize(msg.Width-h, msg.Height-v)
+		m.width = msg.Width - h
+		m.height = msg.Height - v
+		if m.step == stepModelSelect || m.step == stepActionSelect || m.step == stepProviderSelect {
+			m.list.SetSize(m.width, m.height)
+		}
 	case initCompleteMsg:
 		if m.step == stepLoading {
-			m.step = stepModelSelect
+			return m, m.nextStep()
 		}
-		return m, nil
+	case advanceStepMsg:
+		return m, m.nextStep()
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -137,14 +173,14 @@ func (m *wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateModelSelect(msg)
 	case stepModelInput:
 		return m.updateModelInput(msg)
+	case stepActionSelect:
+		return m.updateActionSelect(msg)
 	case stepProviderSelect:
 		return m.updateProviderSelect(msg)
 	case stepVercelConfirm:
 		return m.updateVercelConfirm(msg)
 	case stepVercelInput:
 		return m.updateVercelInput(msg)
-	case stepActionSelect:
-		return m.updateActionSelect(msg)
 	}
 	return m, nil
 }
@@ -165,6 +201,8 @@ func (m *wizardModel) View() string {
 			m.selectedModel,
 			m.textInput.View(),
 		)
+	case stepActionSelect:
+		return docStyle.Render(m.list.View())
 	case stepProviderSelect:
 		return docStyle.Render(m.list.View())
 	case stepVercelConfirm:
@@ -174,8 +212,6 @@ func (m *wizardModel) View() string {
 			"Enter Vercel token:\n\n%s\n\n(esc to abort)",
 			m.textInput.View(),
 		)
-	case stepActionSelect:
-		return docStyle.Render(m.list.View())
 	case stepDone:
 		return "Wizard complete. Launching...\n"
 	}
@@ -192,12 +228,8 @@ func (m *wizardModel) updateModelSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ok {
 				m.selectedModel = i.title
 				if strings.Contains(i.desc, "✓") || m.selectedModel == "local" {
-					// Already configured or no key needed, skip to provider
-					m.step = stepProviderSelect
-					m.list = createProviderList(m.store)
-					return m, nil
+					return m, func() tea.Msg { return advanceStepMsg{} }
 				}
-				// Needs input
 				m.step = stepModelInput
 				m.textInput.Reset()
 				return m, nil
@@ -221,13 +253,36 @@ func (m *wizardModel) updateModelInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Method:     credentials.MethodStoredToken,
 				})
 			}
-			m.step = stepProviderSelect
-			m.list = createProviderList(m.store)
-			return m, nil
+			return m, func() tea.Msg { return advanceStepMsg{} }
 		}
 	}
 	var cmd tea.Cmd
 	m.textInput, cmd = m.textInput.Update(msg)
+	return m, cmd
+}
+
+func (m *wizardModel) updateActionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "enter" {
+			i, ok := m.list.SelectedItem().(item)
+			if ok {
+				switch i.title {
+				case "Just build":
+					m.selectedAction = orchestrator.ActionBuild
+				case "Build + test":
+					m.selectedAction = orchestrator.ActionTest
+				case "Deploy":
+					m.selectedAction = orchestrator.ActionDeploy
+				case "Test + deploy":
+					m.selectedAction = orchestrator.ActionTestAndDeploy
+				}
+				return m, func() tea.Msg { return advanceStepMsg{} }
+			}
+		}
+	}
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
 	return m, cmd
 }
 
@@ -238,17 +293,12 @@ func (m *wizardModel) updateProviderSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
 				if i.title != "vercel" {
-					// Other providers not implemented
 					return m, nil
 				}
 				m.selectedProvider = i.title
 				if strings.Contains(i.desc, "✓") {
-					// Configured
-					m.step = stepActionSelect
-					m.list = createActionList()
-					return m, nil
+					return m, func() tea.Msg { return advanceStepMsg{} }
 				}
-				// Vercel not configured
 				m.step = stepVercelConfirm
 				return m, nil
 			}
@@ -289,40 +339,11 @@ func (m *wizardModel) updateVercelInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Method:   credentials.MethodStoredToken,
 				})
 			}
-			m.step = stepActionSelect
-			m.list = createActionList()
-			return m, nil
+			return m, func() tea.Msg { return advanceStepMsg{} }
 		}
 	}
 	var cmd tea.Cmd
 	m.textInput, cmd = m.textInput.Update(msg)
-	return m, cmd
-}
-
-func (m *wizardModel) updateActionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if msg.String() == "enter" {
-			i, ok := m.list.SelectedItem().(item)
-			if ok {
-				// Map title to action
-				switch i.title {
-				case "Just build":
-					m.selectedAction = orchestrator.ActionBuild
-				case "Build + test":
-					m.selectedAction = orchestrator.ActionTest
-				case "Deploy":
-					m.selectedAction = orchestrator.ActionDeploy
-				case "Test + deploy":
-					m.selectedAction = orchestrator.ActionTestAndDeploy
-				}
-				m.step = stepDone
-				return m, tea.Quit
-			}
-		}
-	}
-	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
 	return m, cmd
 }
 

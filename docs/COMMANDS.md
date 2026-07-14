@@ -5,28 +5,32 @@ Run `atlas --help` for a full list at any time.
 
 ---
 
-## `atlas deploy`
+## `atlas`
 
-Analyze, build, fix, and deploy a project.
+Analyze, build, fix, run tests, and deploy a project.
 
 **Usage:**
 ```
-atlas deploy <path> [flags]
+atlas [path] [flags]
 ```
 
 **Flags:**
 | Flag | Description |
 |------|-------------|
-| `--provider <name>` | Deployment provider: `vercel`, `render`, `netlify`, `fly`, `railway` (optional if using interactive wizard) |
-| `--model <name>` | LLM provider override (e.g., `anthropic`, `openai`) (optional) |
-| `--action <mode>` | Action mode: `build`, `test`, `deploy`, `test-and-deploy` (default: `deploy`) |
+| `--path <path>` | Project path (alternative to positional arg, use this for paths that collide with a subcommand name) |
+| `--model <name>` | LLM provider to use (e.g., `anthropic`, `openai`) (optional) |
+| `--action <mode>` | Action mode: `build`, `test`, `deploy`, `test-and-deploy` (optional) |
+| `--provider <name>` | Deployment provider: `vercel`, `render`, `netlify`, `fly`, `railway` (optional) |
 | `--allow-dirty` | Skip the uncommitted-changes check and proceed anyway |
 
-*Note: Running `atlas deploy <path>` interactively without `--provider` or `--model` flags will launch a terminal wizard to guide you through selecting a model, setting credentials, choosing a provider, and picking an action.*
+*Note: Running `atlas <path>` interactively without all required flags will launch a terminal wizard to guide you through selecting a model, picking an action, and (conditionally) setting credentials and choosing a provider.*
 
-**Example — successful deploy:**
+**Path Collision Caveat:**
+If your project directory shares a name with a registered subcommand (like `models`, `providers`, `debug`), `atlas <that-name>` will run the subcommand, not treat it as a path. Use the `--path <that-name>` escape hatch to disambiguate.
+
+**Example — fully non-interactive, unchanged pipeline behavior:**
 ```
-$ atlas deploy ./my-app --provider vercel
+$ atlas ./oss/todo --model anthropic --action deploy --provider vercel
 ✓ Config loaded
 ✓ Workspace resolved
 → Checking Vercel authentication...
@@ -38,6 +42,24 @@ $ atlas deploy ./my-app --provider vercel
 → Awaiting approval to deploy to vercel (production) [y/N]: y
 → Deploying to vercel (production)...
 ✓ Deployed successfully to https://my-app-xyz.vercel.app
+```
+
+**Example — interactive, nothing supplied:**
+```
+$ atlas ./oss/todo
+# → model screen → action screen → (provider screen only if "deploy" or "test-and-deploy" chosen)
+```
+
+**Example — interactive, build-only:**
+```
+$ atlas ./oss/todo
+# → model screen → action screen → user picks "Just build" → pipeline runs, NO provider screen
+```
+
+**Example — partial flags, wizard fills the rest:**
+```
+$ atlas ./oss/todo --model anthropic
+# → wizard starts at the action screen, skips model select
 ```
 
 **Example — build fails, LLM fixes it:**
@@ -220,7 +242,7 @@ atlas providers set vercel
 
 **Option C — CLI login (interactive callback):**
 ```bash
-atlas deploy ./my-app --provider vercel
+atlas <path> --provider vercel
 # Atlas will prompt to install/run `vercel login` if needed
 ```
 
