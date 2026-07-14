@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -91,7 +92,30 @@ func (g GitValidate) Execute(ctx context.Context, s *session.Session) (ToolResul
 
 	// Is clean? (empty porcelain output ↔ clean)
 	if out, ok := run("status", "--porcelain"); ok {
-		clean := strings.TrimSpace(out) == ""
+		clean := true
+		relWorkspace, err := filepath.Rel(g.GitRoot, g.WorkspaceRoot)
+		var atlasPathPrefix string
+		if err == nil && relWorkspace != "." && relWorkspace != "" {
+			atlasPathPrefix = filepath.ToSlash(relWorkspace) + "/.atlas"
+		} else {
+			atlasPathPrefix = ".atlas"
+		}
+
+		for _, line := range strings.Split(out, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if len(line) > 3 {
+				path := line[3:]
+				path = strings.Trim(path, `"`)
+				if strings.HasPrefix(path, atlasPathPrefix+"/") || path == atlasPathPrefix || path == atlasPathPrefix+"/" {
+					continue
+				}
+			}
+			clean = false
+			break
+		}
 		gb.IsClean = &clean
 	}
 
