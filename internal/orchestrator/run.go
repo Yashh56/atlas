@@ -127,21 +127,23 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		return
 	}
 
-	registry := deploy.NewRegistry()
-	registry.Register(&deploy.VercelProvider{})
-	
-	var ok bool
-	provider, ok = registry.Get(providerName)
-	if !ok {
-		err = fmt.Errorf("orchestrator: provider %q not supported yet", providerName)
-		return
-	}
-
-	if providerName == "vercel" {
-		fmt.Printf("%s Checking Vercel authentication...\n", styleArrow)
-		if authErr := deploy.EnsureVercelAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
-			err = fmt.Errorf("Vercel auth failed: %w", authErr)
+	if providerName != "" {
+		registry := deploy.NewRegistry()
+		registry.Register(&deploy.VercelProvider{})
+		
+		var ok bool
+		provider, ok = registry.Get(providerName)
+		if !ok {
+			err = fmt.Errorf("orchestrator: provider %q not supported yet", providerName)
 			return
+		}
+
+		if providerName == "vercel" {
+			fmt.Printf("%s Checking Vercel authentication...\n", styleArrow)
+			if authErr := deploy.EnsureVercelAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
+				err = fmt.Errorf("Vercel auth failed: %w", authErr)
+				return
+			}
 		}
 	}
 
