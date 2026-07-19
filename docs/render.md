@@ -4,7 +4,7 @@ Atlas supports triggering deployments for web services and static sites hosted o
 
 ## Pre-requisites
 
-Render deployments through Atlas operate differently from Vercel deployments. Atlas **does not** create Render services for you from scratch. You must first create and configure your Web Service or Static Site in the Render dashboard. Once the service exists, Atlas can orchestrate, trigger, and monitor subsequent deployments.
+Atlas can deploy your project to Render either by linking to an existing service or by automatically creating a new service for you directly from the CLI.
 
 ## Configuration
 
@@ -19,21 +19,19 @@ You need to provide your personal Render API key. You can do this in two ways:
   atlas providers set render
   ```
 
-### 2. Service ID Configuration
-You must link your local project to a specific Render Service ID (e.g., `srv-c...`). You can obtain this ID from the Render dashboard (in your service's URL or settings).
-
-To configure the Service ID for your project, run:
-```bash
-atlas providers set render --service-id srv-your-service-id
-```
-This stores the `render_service_id` safely in your local `.atlas/project.json` configuration.
+### 2. Service Creation & Configuration
+You do **NOT** need to manually provide a Service ID or create the service on the dashboard. When you deploy a project for the first time, Atlas will:
+1. Automatically detect if your project is a Static Site (e.g. React/Vite) or a Web Service (e.g. Node/Express).
+2. Determine your build and start commands by analyzing your `package.json`.
+3. Use the Render API to automatically create the service on your account.
+4. Save the newly generated `render_service_id` safely in your local `.atlas/project.json` configuration so future deploys reuse the same service.
 
 ## Usage
 
 To trigger a deployment, use:
 
 ```bash
-atlas deploy /path/to/project --provider render
+atlas /path/to/project --action deploy --provider render
 ```
 
 ### Git Push Preconditions
