@@ -108,8 +108,8 @@ $ atlas providers unset vercel
 ```
 
 **Notes:**
-- Vercel: checks `VERCEL_TOKEN` env var first, then the credential store.
-- Other providers: checks their respective env vars (`RENDER_TOKEN`, `NETLIFY_AUTH_TOKEN`, `FLY_API_TOKEN`, `RAILWAY_API_TOKEN`). Credential store support for these is planned.
+- Vercel and Render: check their respective env vars (`VERCEL_TOKEN`, `RENDER_TOKEN`) first, then the credential store.
+- Other providers: check their respective env vars (`NETLIFY_AUTH_TOKEN`, `FLY_API_TOKEN`, `RAILWAY_API_TOKEN`). Credential store support for these is planned.
 - Secret values are never printed — only `detected`/`authenticated`/`not configured` status.
 
 ---
@@ -175,7 +175,7 @@ LLM Response: SUCCESS
 **Example — missing key:**
 ```
 $ atlas testllm .
-Testing LLM connection to provider: anthropic (model: claude-sonnet-4-6)...
+Testing LLM connection to provider: anthropic (model: claude-3-5-sonnet-20240620)...
 Error: API call failed: goai generate text (anthropic): resolving auth token: goai: no API key or token source configured
 ```
 

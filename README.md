@@ -18,6 +18,13 @@ go build -o atlas ./cmd/atlas
 
 Atlas uses an LLM (by default Anthropic Claude) to auto-fix build errors. Set the key for your chosen provider:
 
+**Using the CLI (Secure Credential Store):**
+```bash
+# Example: Store your Mistral key securely
+atlas models set mistral
+```
+
+**Using Environment Variables:**
 ```bash
 # Example: Mistral
 export MISTRAL_API_KEY=your-key-here
@@ -55,7 +62,11 @@ Create `.atlas/config.json` in your project root:
 ### 5. Deploy
 
 ```bash
-atlas deploy ./my-project --provider vercel
+# Run interactively (wizard will prompt for provider & action)
+atlas ./my-project
+
+# Or run fully non-interactive via flags
+atlas ./my-project --action deploy --provider render
 ```
 
 Atlas will:
@@ -71,7 +82,7 @@ Atlas will:
 
 | Command | Description |
 |---------|-------------|
-| `atlas deploy <path> --provider <name>` | Full deploy pipeline |
+| `atlas <path> --action deploy --provider <name>` | Full deploy pipeline |
 | `atlas providers` | Check deploy provider auth status |
 | `atlas models` | Check LLM API key status |
 | `atlas testllm <path>` | Verify LLM key with a live ping |
