@@ -19,7 +19,7 @@ type Config struct {
 // defaults returns a Config with sane out-of-the-box values.
 func defaults() *Config {
 	return &Config{
-		DefaultModel:      "claude-sonnet-4-6",
+		DefaultModel:      "",
 		LLMProvider:       "anthropic",
 		LocalLLMBaseURL:   "http://localhost:11434/v1",
 		Approval:          "manual",

@@ -48,42 +48,62 @@ func resolveAPIKey(store *credentials.Store, provider, envVar string) (string, e
 
 // ResolveModel maps Atlas's config.LLMProvider value to a GoAI provider model.
 func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
-	// For all non-local providers, resolve the API key (env var or store) and
-	// set it process-locally. This ensures GoAI picks it up without needing to
-	// rely on provider-specific WithAPIKey() constructor options.
+	modelName := cfg.DefaultModel
+
 	switch cfg.LLMProvider {
 	case "anthropic":
+		if modelName == "" || modelName == "claude-sonnet-4-6" {
+			modelName = "claude-3-5-sonnet-20240620"
+		}
 		key, err := resolveAPIKey(store, "anthropic", "ANTHROPIC_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("ANTHROPIC_API_KEY", key)
-		return anthropic.Chat(cfg.DefaultModel), nil
+		return anthropic.Chat(modelName), nil
 	case "openai":
+		if modelName == "" || modelName == "claude-sonnet-4-6" {
+			modelName = "gpt-4o"
+		}
 		key, err := resolveAPIKey(store, "openai", "OPENAI_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("OPENAI_API_KEY", key)
-		return openai.Chat(cfg.DefaultModel), nil
+		return openai.Chat(modelName), nil
 	case "gemini":
+		if modelName == "" || modelName == "claude-sonnet-4-6" {
+			modelName = "gemini-1.5-pro-latest"
+		}
 		key, err := resolveAPIKey(store, "gemini", "GEMINI_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("GEMINI_API_KEY", key)
-		return google.Chat(cfg.DefaultModel), nil
+		return google.Chat(modelName), nil
 	case "mistral":
+		if modelName == "" || modelName == "claude-sonnet-4-6" {
+			modelName = "mistral-large-latest"
+		}
 		key, err := resolveAPIKey(store, "mistral", "MISTRAL_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("MISTRAL_API_KEY", key)
-		return mistral.Chat(cfg.DefaultModel), nil
+		return mistral.Chat(modelName), nil
 	case "groq":
+		if modelName == "" || modelName == "claude-sonnet-4-6" {
+			modelName = "llama3-70b-8192"
+		}
 		key, err := resolveAPIKey(store, "groq", "GROQ_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("GROQ_API_KEY", key)
-		return groq.Chat(cfg.DefaultModel), nil
+		return groq.Chat(modelName), nil
 	case "grok":
+		if modelName == "" || modelName == "claude-sonnet-4-6" {
+			modelName = "grok-beta"
+		}
 		key, err := resolveAPIKey(store, "grok", "XAI_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("XAI_API_KEY", key)
-		return xai.Chat(cfg.DefaultModel), nil
+		return xai.Chat(modelName), nil
 	case "local":
-		return compat.Chat(cfg.DefaultModel, compat.WithBaseURL(cfg.LocalLLMBaseURL)), nil
+		if modelName == "" || modelName == "claude-sonnet-4-6" {
+			modelName = "llama3"
+		}
+		return compat.Chat(modelName, compat.WithBaseURL(cfg.LocalLLMBaseURL)), nil
 	default:
 		return nil, fmt.Errorf("unknown llm_provider: %s", cfg.LLMProvider)
 	}

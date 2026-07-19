@@ -13,8 +13,8 @@ func TestLoad_MissingFile_ReturnsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error for missing file, got: %v", err)
 	}
-	if cfg.DefaultModel != "claude-sonnet-4-6" {
-		t.Errorf("DefaultModel = %q, want %q", cfg.DefaultModel, "claude-sonnet-4-6")
+	if cfg.DefaultModel != "" {
+		t.Errorf("DefaultModel = %q, want %q", cfg.DefaultModel, "")
 	}
 	if cfg.Approval != "manual" {
 		t.Errorf("Approval = %q, want %q", cfg.Approval, "manual")

@@ -14,7 +14,7 @@ func TestResolveModel_AllProviders(t *testing.T) {
 		name  string
 		model string
 	}{
-		{"anthropic", "claude-sonnet-4-6"},
+		{"anthropic", "claude-3-5-sonnet-20240620"},
 		{"openai", "gpt-4o"},
 		{"gemini", "gemini-2.5-flash"},
 		{"mistral", "mistral-large-latest"},
@@ -71,7 +71,7 @@ func TestResolveModel_UnknownProvider(t *testing.T) {
 func TestNewClient_ReturnsClient(t *testing.T) {
 	cfg := &config.Config{
 		LLMProvider:  "anthropic",
-		DefaultModel: "claude-sonnet-4-6",
+		DefaultModel: "claude-3-5-sonnet-20240620",
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "dummy-key")
 	
