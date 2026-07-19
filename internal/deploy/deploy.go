@@ -8,6 +8,7 @@ import (
 // DeployInput holds parameters for a deployment.
 type DeployInput struct {
 	WorkspaceRoot string
+	SessionDir    string // directory of the current session state
 	Environment   string // "production" for now
 }
 

@@ -109,7 +109,7 @@ $ atlas providers unset vercel
 
 **Notes:**
 - Vercel: checks `VERCEL_TOKEN` env var first, then the credential store.
-- Other providers: checks their respective env vars (`RENDER_API_KEY`, `NETLIFY_AUTH_TOKEN`, `FLY_API_TOKEN`, `RAILWAY_API_TOKEN`). Credential store support for these is planned.
+- Other providers: checks their respective env vars (`RENDER_TOKEN`, `NETLIFY_AUTH_TOKEN`, `FLY_API_TOKEN`, `RAILWAY_API_TOKEN`). Credential store support for these is planned.
 - Secret values are never printed — only `detected`/`authenticated`/`not configured` status.
 
 ---

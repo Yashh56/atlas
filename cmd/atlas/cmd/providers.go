@@ -6,9 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 
 	"github.com/Yashh56/atlas/internal/credentials"
+	"github.com/Yashh56/atlas/internal/orchestrator"
+	"github.com/Yashh56/atlas/internal/workspace"
 )
 
 var providersCmd = &cobra.Command{
@@ -33,6 +37,7 @@ var providersUnsetCmd = &cobra.Command{
 }
 
 func init() {
+	providersSetCmd.Flags().String("service-id", "", "Render service ID for the current project")
 	providersCmd.AddCommand(providersSetCmd)
 	providersCmd.AddCommand(providersUnsetCmd)
 }
@@ -46,7 +51,7 @@ func runProviders(_ *cobra.Command, _ []string) error {
 
 	fmt.Println("DEPLOY PROVIDERS")
 	printProviderStatus("vercel", "VERCEL_TOKEN", store)
-	printProviderStatus("render", "RENDER_API_KEY", store)
+	printProviderStatus("render", "RENDER_TOKEN", store)
 	printProviderStatus("netlify", "NETLIFY_AUTH_TOKEN", store)
 	printProviderStatus("fly", "FLY_API_TOKEN", store)
 	printProviderStatus("railway", "RAILWAY_API_TOKEN", store)
@@ -82,9 +87,9 @@ func printProviderStatus(name, envVar string, store *credentials.Store) {
 	fmt.Printf("  %s%s✗ not configured\n", name, pad)
 }
 
-func runProvidersSet(_ *cobra.Command, args []string) error {
+func runProvidersSet(cmd *cobra.Command, args []string) error {
 	provider := args[0]
-	if provider != "vercel" {
+	if provider != "vercel" && provider != "render" {
 		return fmt.Errorf("provider %q is not implemented yet", provider)
 	}
 
@@ -110,13 +115,36 @@ func runProvidersSet(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("storing metadata: %w", err)
 	}
 
-	fmt.Println("✓ Stored. This will be used instead of the CLI-delegated login next time you deploy.")
+	fmt.Println("✓ Stored token.")
+
+	if provider == "render" {
+		serviceID, _ := cmd.Flags().GetString("service-id")
+		if serviceID != "" {
+			dir, _ := os.Getwd()
+			ws, err := workspace.Resolve(dir)
+			if err != nil {
+				return fmt.Errorf("could not resolve workspace to save service ID: %w", err)
+			}
+
+			var proj orchestrator.ProjectState
+			if p, err := orchestrator.LoadProject(filepath.Join(ws.Root, ".atlas")); err == nil {
+				proj = *p
+			}
+			proj.RenderServiceID = &serviceID
+			if err := orchestrator.SaveProject(filepath.Join(ws.Root, ".atlas"), &proj); err != nil {
+				return fmt.Errorf("storing project config: %w", err)
+			}
+			fmt.Println("✓ Stored Render service ID in project configuration.")
+		}
+	}
+
+	fmt.Println("This will be used instead of the CLI-delegated login next time you deploy.")
 	return nil
 }
 
 func runProvidersUnset(_ *cobra.Command, args []string) error {
 	provider := args[0]
-	if provider != "vercel" {
+	if provider != "vercel" && provider != "render" {
 		return fmt.Errorf("provider %q is not implemented yet", provider)
 	}
 

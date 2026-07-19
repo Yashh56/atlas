@@ -1,4 +1,4 @@
-package deploy
+package vercel
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/Yashh56/atlas/internal/deploy"
 	"github.com/Yashh56/atlas/internal/tools"
 )
 
@@ -15,7 +16,7 @@ type VercelProvider struct{}
 
 func (v *VercelProvider) Name() string { return "vercel" }
 
-func (v *VercelProvider) Deploy(ctx context.Context, in DeployInput) (*Deployment, error) {
+func (v *VercelProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*deploy.Deployment, error) {
 	token := os.Getenv("VERCEL_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("VERCEL_TOKEN not set — see docs for how to generate one")
@@ -43,9 +44,9 @@ func (v *VercelProvider) Deploy(ctx context.Context, in DeployInput) (*Deploymen
 		return nil, fmt.Errorf("failed to parse deployment URL from output: %w", err)
 	}
 
-	return &Deployment{
+	return &deploy.Deployment{
 		URL:        url,
-		Provider:   v.Name(),
+		Provider:   "vercel",
 		DeployedAt: time.Now().UTC(),
 	}, nil
 }

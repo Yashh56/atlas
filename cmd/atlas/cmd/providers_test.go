@@ -8,7 +8,7 @@ import (
 )
 
 func TestProvidersSet_UnimplementedProvider(t *testing.T) {
-	err := runProvidersSet(nil, []string{"render"})
+	err := runProvidersSet(nil, []string{"netlify"})
 	if err == nil || !strings.Contains(err.Error(), "not implemented yet") {
 		t.Fatalf("expected not implemented error, got %v", err)
 	}

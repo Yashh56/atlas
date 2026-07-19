@@ -292,15 +292,19 @@ func (m *wizardModel) updateProviderSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "enter" {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
-				if i.title != "vercel" {
+				if i.title != "vercel" && i.title != "render" {
 					return m, nil
 				}
 				m.selectedProvider = i.title
 				if strings.Contains(i.desc, "✓") {
 					return m, func() tea.Msg { return advanceStepMsg{} }
 				}
-				m.step = stepVercelConfirm
-				return m, nil
+				if i.title == "vercel" {
+					m.step = stepVercelConfirm
+					return m, nil
+				}
+				// For render, if not configured, we just advance and let the CLI prompt.
+				return m, func() tea.Msg { return advanceStepMsg{} }
 			}
 		}
 	}
@@ -396,6 +400,14 @@ func createProviderList(store *credentials.Store) list.Model {
 				status = "✓ ENV var detected"
 			} else if store != nil {
 				if s, _ := store.GetSecret("vercel"); s != "" {
+					status = "✓ stored"
+				}
+			}
+		} else if p == "render" {
+			if os.Getenv("RENDER_TOKEN") != "" {
+				status = "✓ ENV var detected"
+			} else if store != nil {
+				if s, _ := store.GetSecret("render"); s != "" {
 					status = "✓ stored"
 				}
 			}

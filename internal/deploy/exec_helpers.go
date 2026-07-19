@@ -7,9 +7,26 @@ import (
 	"os/exec"
 )
 
-// lookPath wraps exec.LookPath. Separated so vercel_auth.go can call it cleanly.
-func lookPath(file string) (string, error) {
+// CommandRunner is the interface for running shell commands, injected for testability.
+type CommandRunner interface {
+	LookPath(file string) (string, error)
+	Run(ctx context.Context, name string, args ...string) (string, error)
+	RunInteractive(ctx context.Context, name string, args ...string) error
+}
+
+// OSCommandRunner is the real CommandRunner that calls the actual OS.
+type OSCommandRunner struct{}
+
+func (OSCommandRunner) LookPath(file string) (string, error) {
 	return exec.LookPath(file)
+}
+
+func (OSCommandRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	return runCapture(ctx, name, args...)
+}
+
+func (OSCommandRunner) RunInteractive(ctx context.Context, name string, args ...string) error {
+	return runInherited(ctx, name, args...)
 }
 
 // runCapture runs a command and returns its combined stdout+stderr output.

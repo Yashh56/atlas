@@ -1,4 +1,4 @@
-package deploy_test
+package vercel_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 
 	"github.com/Yashh56/atlas/internal/config"
 	"github.com/Yashh56/atlas/internal/credentials"
-	"github.com/Yashh56/atlas/internal/deploy"
+	"github.com/Yashh56/atlas/internal/deploy/vercel"
 )
 
 // fakeRunner implements deploy.CommandRunner for testing — no real exec calls.
@@ -67,7 +67,7 @@ func openTempStore(t *testing.T) *credentials.Store {
 func TestEnsureVercelAuth_EnvVar(t *testing.T) {
 	t.Setenv("VERCEL_TOKEN", "tok-xxx")
 	var out bytes.Buffer
-	err := deploy.EnsureVercelAuthFull(context.Background(), nil, &config.Config{}, &fakeRunner{}, strings.NewReader(""), &out)
+	err := vercel.EnsureVercelAuthFull(context.Background(), nil, &config.Config{}, &fakeRunner{}, strings.NewReader(""), &out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,9 +85,10 @@ func TestEnsureVercelAuth_StoredToken(t *testing.T) {
 		Method:   credentials.MethodStoredToken,
 		Account:  "stored@example.com",
 	})
+	_ = store.SetSecret("vercel", "mock-token")
 
 	var out bytes.Buffer
-	err := deploy.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, &fakeRunner{}, strings.NewReader(""), &out)
+	err := vercel.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, &fakeRunner{}, strings.NewReader(""), &out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestEnsureVercelAuth_CLIMissingUserDeclines(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := deploy.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, runner, strings.NewReader("N\n"), &out)
+	err := vercel.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, runner, strings.NewReader("N\n"), &out)
 	if err == nil {
 		t.Fatal("expected error when user declines install")
 	}
@@ -125,7 +126,7 @@ func TestEnsureVercelAuth_CLIAlreadyLoggedIn(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := deploy.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, runner, strings.NewReader(""), &out)
+	err := vercel.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, runner, strings.NewReader(""), &out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestEnsureVercelAuth_CLILoginSucceeds(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := deploy.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, runner, strings.NewReader(""), &out)
+	err := vercel.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, runner, strings.NewReader(""), &out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,7 +201,7 @@ func TestEnsureVercelAuth_CLILoginFails(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := deploy.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, runner, strings.NewReader(""), &out)
+	err := vercel.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, runner, strings.NewReader(""), &out)
 	if err == nil {
 		t.Fatal("expected error when login fails")
 	}
