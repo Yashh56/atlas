@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/Yashh56/atlas/internal/session"
@@ -138,3 +139,113 @@ func TestGitValidate_NotAGitRepo(t *testing.T) {
 
 // ensure RunCommand is accessible from test (exported).
 var _ = runtime.GOOS
+
+// Helper for Render push check tests
+func setupLocalAndRemoteRepos(t *testing.T) (localDir, remoteDir string) {
+	t.Helper()
+	remoteDir = t.TempDir()
+	
+	gitRunRemote := func(args ...string) {
+		t.Helper()
+		rc := tools.RunCommand{Command: "git", Args: args, Dir: remoteDir}
+		rc.Execute(context.Background(), &session.Session{})
+	}
+	gitRunRemote("init", "--bare")
+
+	localDir = t.TempDir()
+	initGitRepo(t, localDir)
+
+	gitRunLocal := func(args ...string) {
+		t.Helper()
+		rc := tools.RunCommand{Command: "git", Args: args, Dir: localDir}
+		rc.Execute(context.Background(), &session.Session{})
+	}
+	gitRunLocal("remote", "add", "origin", remoteDir)
+
+	f := filepath.Join(localDir, "README.md")
+	if err := os.WriteFile(f, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gitRunLocal("add", ".")
+	gitRunLocal("commit", "-m", "init")
+	gitRunLocal("branch", "-M", "main")
+	
+	return localDir, remoteDir
+}
+
+func TestGitValidate_RenderPushCheck_Fails(t *testing.T) {
+	localDir, _ := setupLocalAndRemoteRepos(t)
+	// We deliberately don't push, so local has 1 commit and remote has 0 / no tracking branch
+	// Wait, if there is no tracking branch, `git rev-parse origin/main` will fail.
+	
+	// First push to create the remote branch
+	rc := tools.RunCommand{Command: "git", Args: []string{"push", "-u", "origin", "main"}, Dir: localDir}
+	rc.Execute(context.Background(), &session.Session{})
+
+	// Now add a local commit that is NOT pushed
+	f := filepath.Join(localDir, "README.md")
+	os.WriteFile(f, []byte("hello again\n"), 0o644)
+	
+	rc = tools.RunCommand{Command: "git", Args: []string{"commit", "-am", "second"}, Dir: localDir}
+	rc.Execute(context.Background(), &session.Session{})
+
+	sessDir := t.TempDir()
+	tool := tools.GitValidate{WorkspaceRoot: localDir, GitRoot: localDir, SessionDir: sessDir, Provider: "render"}
+	result, err := tool.Execute(context.Background(), &session.Session{})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	
+	if result.Success {
+		t.Fatalf("expected Success=false, got true")
+	}
+	if !strings.Contains(result.Error, "hasn't been pushed") {
+		t.Errorf("Expected error about unpushed commit, got: %v", result.Error)
+	}
+}
+
+func TestGitValidate_RenderPushCheck_Passes(t *testing.T) {
+	localDir, _ := setupLocalAndRemoteRepos(t)
+	
+	// Push the commit so remote matches local
+	rc := tools.RunCommand{Command: "git", Args: []string{"push", "-u", "origin", "main"}, Dir: localDir}
+	rc.Execute(context.Background(), &session.Session{})
+
+	sessDir := t.TempDir()
+	tool := tools.GitValidate{WorkspaceRoot: localDir, GitRoot: localDir, SessionDir: sessDir, Provider: "render"}
+	result, err := tool.Execute(context.Background(), &session.Session{})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	
+	if !result.Success {
+		t.Fatalf("expected Success=true, got Error=%q", result.Error)
+	}
+}
+
+func TestGitValidate_NonRenderSkipsPushCheck(t *testing.T) {
+	localDir, _ := setupLocalAndRemoteRepos(t)
+	
+	// First push to create the remote branch
+	rc := tools.RunCommand{Command: "git", Args: []string{"push", "-u", "origin", "main"}, Dir: localDir}
+	rc.Execute(context.Background(), &session.Session{})
+
+	// Add an unpushed local commit
+	f := filepath.Join(localDir, "README.md")
+	os.WriteFile(f, []byte("hello again\n"), 0o644)
+	rc = tools.RunCommand{Command: "git", Args: []string{"commit", "-am", "second"}, Dir: localDir}
+	rc.Execute(context.Background(), &session.Session{})
+
+	sessDir := t.TempDir()
+	// Provider is "vercel" or "", NOT "render"
+	tool := tools.GitValidate{WorkspaceRoot: localDir, GitRoot: localDir, SessionDir: sessDir, Provider: "vercel"}
+	result, err := tool.Execute(context.Background(), &session.Session{})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	
+	if !result.Success {
+		t.Fatalf("expected Success=true because provider != render, got Error=%q", result.Error)
+	}
+}

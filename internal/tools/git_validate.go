@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"path/filepath"
 	"strings"
@@ -18,21 +19,13 @@ type GitValidate struct {
 	WorkspaceRoot string // path to the project directory
 	GitRoot       string // path returned by workspace.Resolve; "" if not a git repo
 	SessionDir    string // where project.json lives; "" → skip write (unit tests)
+	Provider      string // target deployment provider
 }
 
 // Name returns the canonical tool identifier.
 func (g GitValidate) Name() string { return "git_validate" }
 
-// gitPatch is used to update only the git block of project.json.
-// We load the raw JSON, unmarshal into this partial struct, update git, re-marshal.
-type gitPatch struct {
-	Framework      *string  `json:"framework"`
-	Language       *string  `json:"language"`
-	Runtime        *string  `json:"runtime"`
-	PackageManager *string  `json:"package_manager"`
-	Docker         bool     `json:"docker"`
-	Git            gitBlock `json:"git"`
-}
+// (gitPatch struct removed as it is no longer used)
 
 type gitBlock struct {
 	Branch    *string `json:"branch"`
@@ -147,6 +140,36 @@ func (g GitValidate) Execute(ctx context.Context, s *session.Session) (ToolResul
 		}
 	}
 
+	// For render provider, verify that the local HEAD matches the remote branch HEAD
+	if g.Provider == "render" {
+		if gb.Remote == nil || *gb.Remote == "" {
+			return ToolResult{
+				Success:  false,
+				Error:    "Render requires a remote Git repository to deploy from. Please add a remote (e.g., origin) and push your code.",
+				Duration: time.Since(start),
+			}, nil
+		}
+		
+		if gb.CommitSHA != nil && gb.Branch != nil {
+			remoteRef := "origin/" + *gb.Branch
+		if remoteSHA, ok := run("rev-parse", remoteRef); ok && remoteSHA != "" {
+			if *gb.CommitSHA != remoteSHA {
+				return ToolResult{
+					Success:  false,
+					Error:    fmt.Sprintf("Local commit %s hasn't been pushed — Render deploys from the remote branch, not local disk. Push your changes first.", (*gb.CommitSHA)[:7]),
+					Duration: time.Since(start),
+				}, nil
+			}
+		} else {
+			return ToolResult{
+				Success:  false,
+				Error:    fmt.Sprintf("Local commit %s hasn't been pushed — Render deploys from the remote branch, not local disk. Push your changes first.", (*gb.CommitSHA)[:7]),
+				Duration: time.Since(start),
+			}, nil
+		}
+		}
+	}
+
 	return ToolResult{
 		Success:  true,
 		Output:   output,
@@ -157,11 +180,14 @@ func (g GitValidate) Execute(ctx context.Context, s *session.Session) (ToolResul
 // patchProjectGit reads project.json, updates only the git block, and saves.
 func (g GitValidate) patchProjectGit(gb gitBlock) error {
 	// Load existing project.json if present; otherwise start fresh.
-	var proj gitPatch
+	var proj map[string]interface{}
 	data, err := state.LoadJSONBytes(g.SessionDir, "project.json")
 	if err == nil {
 		_ = json.Unmarshal(data, &proj)
 	}
-	proj.Git = gb
+	if proj == nil {
+		proj = make(map[string]interface{})
+	}
+	proj["git"] = gb
 	return state.SaveJSON(g.SessionDir, "project.json", proj)
 }

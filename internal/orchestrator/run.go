@@ -10,6 +10,8 @@ import (
 	"github.com/Yashh56/atlas/internal/config"
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/deploy"
+	"github.com/Yashh56/atlas/internal/deploy/render"
+	"github.com/Yashh56/atlas/internal/deploy/vercel"
 	"github.com/Yashh56/atlas/internal/llm"
 	"github.com/Yashh56/atlas/internal/session"
 	"github.com/Yashh56/atlas/internal/state"
@@ -52,12 +54,12 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	planner := NewPlanner("deploy")
 	_ = SavePlanner(sessDir, planner)
 
-	commitSHA, framework, packageManager, err := executeAnalyzeAndValidate(ctx, ws, sess, sessDir, planner, opts)
+	commitSHA, framework, packageManager, err := executeAnalyzeAndValidate(ctx, ws, sess, sessDir, planner, providerName, opts)
 	if err != nil {
 		return err
 	}
 
-	err = executeBuildLoop(ctx, ws, sess, sessDir, planner, llmModel, commitSHA, framework, packageManager, opts)
+	err = executeBuildLoop(ctx, ws, sess, sessDir, planner, llmModel, commitSHA, framework, packageManager, providerName, opts)
 	if err != nil {
 		return err
 	}
@@ -129,8 +131,9 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 
 	if providerName != "" {
 		registry := deploy.NewRegistry()
-		registry.Register(&deploy.VercelProvider{})
-		
+		registry.Register(&vercel.VercelProvider{})
+		registry.Register(&render.RenderProvider{})
+
 		var ok bool
 		provider, ok = registry.Get(providerName)
 		if !ok {
@@ -140,8 +143,14 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 
 		if providerName == "vercel" {
 			fmt.Printf("%s Checking Vercel authentication...\n", styleArrow)
-			if authErr := deploy.EnsureVercelAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
+			if authErr := vercel.EnsureVercelAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
 				err = fmt.Errorf("Vercel auth failed: %w", authErr)
+				return
+			}
+		} else if providerName == "render" {
+			fmt.Printf("%s Checking Render authentication...\n", styleArrow)
+			if authErr := render.EnsureRenderAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
+				err = fmt.Errorf("Render auth failed: %w", authErr)
 				return
 			}
 		}
@@ -155,18 +164,25 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 	}
 
 	sessDir = session.SessionDir(sessionsDir, sess.ID)
-	
+
 	dep = NewDeployment(providerName)
 	_ = SaveDeployment(sessDir, dep)
-	_ = SaveProject(sessDir, &ProjectState{})
+
+	var proj ProjectState
+	if p, err := LoadProject(filepath.Join(ws.Root, ".atlas")); err == nil {
+		proj = *p
+	}
+	_ = SaveProject(sessDir, &proj)
+
+
 
 	fmt.Printf("%s Session created (%s)\n\n", styleCheck, sess.ID)
 	return
 }
 
 func executeAnalyzeAndValidate(
-	ctx context.Context, ws *workspace.Workspace, sess *session.Session, 
-	sessDir string, planner *PlannerState, opts RunOptions,
+	ctx context.Context, ws *workspace.Workspace, sess *session.Session,
+	sessDir string, planner *PlannerState, providerName string, opts RunOptions,
 ) (*string, string, string, error) {
 
 	planner.CurrentStep = "analyze_project"
@@ -181,8 +197,8 @@ func executeAnalyzeAndValidate(
 	}
 
 	planner.CurrentStep = "git_validate"
-	gitTool := tools.GitValidate{WorkspaceRoot: ws.Root, GitRoot: ws.GitRoot, SessionDir: sessDir}
-	gitResult, err := gitTool.Execute(ctx, sess)
+	gitVal := tools.GitValidate{WorkspaceRoot: ws.Root, GitRoot: ws.GitRoot, SessionDir: sessDir, Provider: providerName}
+	gitResult, err := gitVal.Execute(ctx, sess)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("orchestrator: git_validate: %w", err)
 	}
@@ -218,8 +234,8 @@ func executeAnalyzeAndValidate(
 }
 
 func executeBuildLoop(
-	ctx context.Context, ws *workspace.Workspace, sess *session.Session, sessDir string, 
-	planner *PlannerState, llmModel llm.Model, commitSHA *string, framework, packageManager string, opts RunOptions,
+	ctx context.Context, ws *workspace.Workspace, sess *session.Session, sessDir string,
+	planner *PlannerState, llmModel llm.Model, commitSHA *string, framework, packageManager, providerName string, opts RunOptions,
 ) error {
 	buildSuccess := false
 	for {
@@ -247,10 +263,47 @@ func executeBuildLoop(
 			buildSuccess = true
 			planner.Completed = append(planner.Completed, "run_build_command")
 			_ = SavePlanner(sessDir, planner)
-			
+
 			retry := planner.Retries["fix_and_rebuild"]
 			if retry.Count > 0 {
 				fmt.Printf("%s Build succeeded after %d fix attempt(s) (%.1fs)\n\n", styleCheck, retry.Count, durationSec)
+				
+				if CheckCommitApproval(os.Stdin, os.Stdout) {
+					// Commit the changes
+					fmt.Printf("%s Committing fixes...\n", styleArrow)
+					commitCmd := tools.RunCommand{
+						Command: "git",
+						Args:    []string{"commit", "-am", "chore: auto-fix build errors"},
+						Dir:     ws.Root,
+					}
+					commitCmd.Execute(ctx, sess)
+					
+					// Push the changes
+					fmt.Printf("%s Pushing fixes to remote...\n", styleArrow)
+					pushCmd := tools.RunCommand{
+						Command: "git",
+						Args:    []string{"push"},
+						Dir:     ws.Root,
+					}
+					pushCmd.Execute(ctx, sess)
+					fmt.Printf("%s Fixes committed and pushed successfully!\n\n", styleCheck)
+					
+					// Re-run git validation to update project.json with the NEW commit SHA
+					// so that the deploy provider deploys the fixed code instead of the old broken commit.
+					gitVal := tools.GitValidate{
+						WorkspaceRoot: ws.Root,
+						GitRoot:       ws.GitRoot,
+						SessionDir:    sessDir,
+						Provider:      providerName,
+					}
+					gitVal.Execute(ctx, sess)
+				} else {
+					if providerName == "render" {
+						fmt.Printf("%s Warning: You chose not to push the fixes. Remote providers like Render will deploy the old broken commit.\n\n", styleWarn)
+					} else {
+						fmt.Printf("%s Warning: You chose not to commit the fixes. They will remain in your working directory.\n\n", styleWarn)
+					}
+				}
 			} else {
 				fmt.Printf("%s Build succeeded (%.1fs) → %s\n\n", styleCheck, durationSec, buildResult.Output)
 			}
@@ -261,7 +314,7 @@ func executeBuildLoop(
 		retry.Count++
 		planner.Retries["fix_and_rebuild"] = retry
 		planner.Failed = append(planner.Failed, "run_build_command")
-		
+
 		errorMsg := buildResult.Error
 		if bs != nil && bs.LogPath != "" {
 			if tail, tailErr := tools.ReadTailLines(bs.LogPath, 20); tailErr == nil && tail != "" {
@@ -296,7 +349,7 @@ func executeBuildLoop(
 		fmt.Printf("%s Attempting automatic fix...\n", styleArrow)
 		planner.CurrentStep = "fix_code"
 		_ = SavePlanner(sessDir, planner)
-		
+
 		fixTool := tools.FixCode{
 			WorkspaceRoot: ws.Root,
 			Model:         llmModel,
@@ -325,12 +378,12 @@ func executeBuildLoop(
 }
 
 func executeTests(
-	ctx context.Context, ws *workspace.Workspace, sess *session.Session, 
+	ctx context.Context, ws *workspace.Workspace, sess *session.Session,
 	sessDir string, planner *PlannerState, framework, packageManager string, opts RunOptions,
 ) error {
 	planner.CurrentStep = "run_tests"
 	_ = SavePlanner(sessDir, planner)
-	
+
 	fmt.Printf("%s Running tests...\n", styleArrow)
 	testTool := tools.RunTests{
 		WorkspaceRoot:  ws.Root,
@@ -342,7 +395,7 @@ func executeTests(
 	if testErr != nil {
 		return fmt.Errorf("orchestrator: run_tests: %w", testErr)
 	}
-	
+
 	var ts struct {
 		DurationMs int64 `json:"duration_ms"`
 	}
@@ -363,7 +416,7 @@ func executeTests(
 }
 
 func executeDeploy(
-	ctx context.Context, ws *workspace.Workspace, sessDir string, planner *PlannerState, 
+	ctx context.Context, ws *workspace.Workspace, sessDir string, planner *PlannerState,
 	cfg *config.Config, dep *DeploymentState, provider deploy.Provider, providerName string,
 ) error {
 	approved := CheckApproval(cfg, dep, os.Stdin, os.Stdout)
@@ -378,6 +431,7 @@ func executeDeploy(
 
 	deployRes, err := provider.Deploy(ctx, deploy.DeployInput{
 		WorkspaceRoot: ws.Root,
+		SessionDir:    sessDir,
 		Environment:   dep.Environment,
 	})
 	if err != nil {

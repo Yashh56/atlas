@@ -18,7 +18,8 @@ type projectData struct {
 	Runtime        *string     `json:"runtime"`
 	PackageManager *string     `json:"package_manager"`
 	Docker         bool        `json:"docker"`
-	Git            projectGit  `json:"git"`
+	Git             projectGit  `json:"git"`
+	RenderServiceID *string     `json:"render_service_id,omitempty"`
 }
 
 type projectGit struct {
@@ -46,6 +47,12 @@ func (a AnalyzeProject) Execute(ctx context.Context, s *session.Session) (ToolRe
 	start := time.Now()
 
 	proj := &projectData{}
+	if a.SessionDir != "" {
+		data, err := state.LoadJSONBytes(a.SessionDir, "project.json")
+		if err == nil {
+			_ = json.Unmarshal(data, proj)
+		}
+	}
 
 	// --- List the workspace root to discover top-level files. ---
 	listTool := ListDirectory{Path: a.WorkspaceRoot}

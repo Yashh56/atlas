@@ -20,7 +20,8 @@ type ProjectState struct {
 	Runtime        *string `json:"runtime"`
 	PackageManager *string `json:"package_manager"`
 	Docker         bool    `json:"docker"`
-	Git            GitInfo `json:"git"`
+	Git             GitInfo `json:"git"`
+	RenderServiceID *string `json:"render_service_id,omitempty"`
 }
 
 const projectFile = "project.json"

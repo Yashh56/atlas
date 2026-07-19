@@ -3,6 +3,7 @@ package tools
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,6 +51,25 @@ func (r RunBuildCommand) Execute(ctx context.Context, s *session.Session) (ToolR
 			Error:    err.Error(),
 			Duration: time.Since(startedAt),
 		}, nil
+	}
+
+	// Check if package.json has a build script for JS/TS projects
+	if r.PackageManager != "" && r.Framework != "go" {
+		pkgPath := filepath.Join(r.WorkspaceRoot, "package.json")
+		if data, err := os.ReadFile(pkgPath); err == nil {
+			var pkg struct {
+				Scripts map[string]string `json:"scripts"`
+			}
+			if err := json.Unmarshal(data, &pkg); err == nil {
+				if pkg.Scripts["build"] == "" {
+					return ToolResult{
+						Success:  true,
+						Output:   "no build required (no build script in package.json)",
+						Duration: time.Since(startedAt),
+					}, nil
+				}
+			}
+		}
 	}
 
 	if cmdBin == "" {
