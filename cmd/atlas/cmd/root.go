@@ -91,6 +91,17 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no project path given. Please provide a path as an argument or via --path")
 	}
 
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("path %q does not exist", path)
+		}
+		return fmt.Errorf("error checking path %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("path %q is not a directory", path)
+	}
+
 	needsWizard := isInteractive && (deployModel == "" || deployAction == "" || (actionNeedsProvider(orchestrator.Action(deployAction)) && deployProvider == ""))
 
 	if needsWizard {
@@ -134,6 +145,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		AllowDirty:    deployAllowDirty,
 		ModelOverride: deployModel,
 		Action:        orchestrator.Action(deployAction),
+		IsInteractive: isInteractive,
 	}
 	return orchestrator.Run(cmd.Context(), path, strings.ToLower(deployProvider), opts)
 }

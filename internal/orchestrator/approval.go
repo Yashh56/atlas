@@ -77,3 +77,39 @@ func RecordDeployment(dep *DeploymentState, newURL string) {
 	// Rollback is not supported yet
 	dep.RollbackAvailable = false
 }
+
+// PromptDirtyDeploy asks the user how they want to handle uncommitted changes during a deployment.
+// Returns:
+// 1 for "Commit, push, and deploy"
+// 2 for provider-specific option (Deploy dirty for Vercel, Stash and deploy remote for others)
+// 3 for "Cancel"
+func PromptDirtyDeploy(provider string, in io.Reader, out io.Writer) int {
+	fmt.Fprintf(out, "\n--- Dirty Working Tree Detected ---\n")
+	fmt.Fprintf(out, "You have uncommitted changes in your workspace.\n")
+	fmt.Fprintf(out, "How would you like to proceed with the %s deployment?\n", provider)
+
+	fmt.Fprintf(out, "  [1] Commit, push, and deploy (creates a chore commit)\n")
+	if strings.ToLower(provider) == "vercel" {
+		fmt.Fprintf(out, "  [2] Deploy uncommitted changes directly (Warning: dirty local files will be uploaded)\n")
+	} else {
+		fmt.Fprintf(out, "  [2] Stash local changes and deploy latest remote commit (restores stash after deploy)\n")
+	}
+	fmt.Fprintf(out, "  [3] Cancel deployment\n")
+
+	fmt.Fprintf(out, "Select an option [1/2/3]: ")
+
+	scanner := bufio.NewScanner(in)
+	if !scanner.Scan() {
+		return 3
+	}
+
+	ans := strings.TrimSpace(scanner.Text())
+	switch ans {
+	case "1":
+		return 1
+	case "2":
+		return 2
+	default:
+		return 3
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Yashh56/atlas/internal/config"
@@ -42,6 +43,7 @@ type RunOptions struct {
 	AllowDirty    bool
 	ModelOverride string
 	Action        Action
+	IsInteractive bool
 }
 
 // Run executes the full Atlas pipeline by dispatching to modular steps.
@@ -54,7 +56,25 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	planner := NewPlanner("deploy")
 	_ = SavePlanner(sessDir, planner)
 
-	commitSHA, framework, packageManager, err := executeAnalyzeAndValidate(ctx, ws, sess, sessDir, planner, providerName, opts)
+	var didStash bool
+	defer func() {
+		if didStash {
+			fmt.Printf("\n%s Restoring stashed uncommitted changes...\n", styleArrow)
+			popCmd := tools.RunCommand{
+				Command: "git",
+				Args:    []string{"stash", "pop"},
+				Dir:     workspacePath,
+			}
+			res, _ := popCmd.Execute(ctx, sess)
+			if !res.Success {
+				fmt.Printf("%s Failed to pop stash automatically. Please run `git stash pop` manually to resolve any conflicts.\n", styleWarn)
+			} else {
+				fmt.Printf("%s Stash restored successfully.\n", styleCheck)
+			}
+		}
+	}()
+
+	commitSHA, framework, packageManager, didStash, err := executeAnalyzeAndValidate(ctx, ws, sess, sessDir, planner, providerName, opts)
 	if err != nil {
 		return err
 	}
@@ -183,13 +203,13 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 func executeAnalyzeAndValidate(
 	ctx context.Context, ws *workspace.Workspace, sess *session.Session,
 	sessDir string, planner *PlannerState, providerName string, opts RunOptions,
-) (*string, string, string, error) {
+) (*string, string, string, bool, error) {
 
 	planner.CurrentStep = "analyze_project"
 	analyzeTool := tools.AnalyzeProject{WorkspaceRoot: ws.Root, SessionDir: sessDir}
 	analyzeResult, err := analyzeTool.Execute(ctx, sess)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("orchestrator: analyze_project: %w", err)
+		return nil, "", "", false, fmt.Errorf("orchestrator: analyze_project: %w", err)
 	}
 	if analyzeResult.Success {
 		fmt.Printf("%s Project analyzed → %s\n\n", styleCheck, analyzeResult.Output)
@@ -200,7 +220,7 @@ func executeAnalyzeAndValidate(
 	gitVal := tools.GitValidate{WorkspaceRoot: ws.Root, GitRoot: ws.GitRoot, SessionDir: sessDir, Provider: providerName}
 	gitResult, err := gitVal.Execute(ctx, sess)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("orchestrator: git_validate: %w", err)
+		return nil, "", "", false, fmt.Errorf("orchestrator: git_validate: %w", err)
 	}
 
 	if gitResult.Success && gitResult.Output != "no_git_repo" {
@@ -208,8 +228,52 @@ func executeAnalyzeAndValidate(
 		planner.Completed = append(planner.Completed, "git_validate")
 
 		if gitResult.Output == "is_clean:false" && !opts.AllowDirty {
-			_ = SavePlanner(sessDir, planner)
-			return nil, "", "", fmt.Errorf("Working tree has uncommitted changes. Commit or stash them, or re-run with --allow-dirty")
+			if opts.Action == ActionDeploy || opts.Action == ActionTestAndDeploy {
+				if !opts.IsInteractive {
+					_ = SavePlanner(sessDir, planner)
+					return nil, "", "", false, fmt.Errorf("Working tree has uncommitted changes. Commit or stash them, or re-run with --allow-dirty")
+				}
+				
+				choice := PromptDirtyDeploy(providerName, os.Stdin, os.Stdout)
+				switch choice {
+				case 1:
+					fmt.Printf("%s Committing fixes...\n", styleArrow)
+					commitCmd := tools.RunCommand{
+						Command: "git",
+						Args:    []string{"commit", "-am", "chore: auto-commit before deploy"},
+						Dir:     ws.Root,
+					}
+					commitCmd.Execute(ctx, sess)
+					
+					fmt.Printf("%s Pushing fixes to remote...\n", styleArrow)
+					pushCmd := tools.RunCommand{
+						Command: "git",
+						Args:    []string{"push"},
+						Dir:     ws.Root,
+					}
+					pushRes, pushErr := pushCmd.Execute(ctx, sess)
+					if pushErr != nil || !pushRes.Success {
+						return nil, "", "", false, fmt.Errorf("failed to push changes to remote: %s", pushRes.Error)
+					}
+					fmt.Printf("%s Fixes committed and pushed successfully!\n\n", styleCheck)
+					
+					// Re-validate to get the new commit SHA
+					gitVal.Execute(ctx, sess)
+				case 2:
+					if strings.ToLower(providerName) != "vercel" {
+						fmt.Printf("%s Stashing uncommitted changes...\n", styleArrow)
+						stashCmd := tools.RunCommand{
+							Command: "git",
+							Args:    []string{"stash", "push", "-u", "-m", "atlas pre-deploy stash"},
+							Dir:     ws.Root,
+						}
+						stashCmd.Execute(ctx, sess)
+						return nil, "", "", true, nil // return early, didStash = true
+					}
+				case 3:
+					return nil, "", "", false, fmt.Errorf("deployment cancelled due to uncommitted changes")
+				}
+			}
 		}
 	} else if gitResult.Success && gitResult.Output == "no_git_repo" {
 		fmt.Printf("%s Git: workspace is not inside a git repository — skipping git validation\n\n", styleWarn)
@@ -230,7 +294,7 @@ func executeAnalyzeAndValidate(
 		packageManager = *proj.PackageManager
 	}
 
-	return commitSHA, framework, packageManager, nil
+	return commitSHA, framework, packageManager, false, nil
 }
 
 func executeBuildLoop(
@@ -263,6 +327,9 @@ func executeBuildLoop(
 			buildSuccess = true
 			planner.Completed = append(planner.Completed, "run_build_command")
 			_ = SavePlanner(sessDir, planner)
+
+			// Clean up backups on success
+			os.RemoveAll(filepath.Join(sessDir, "backups"))
 
 			retry := planner.Retries["fix_and_rebuild"]
 			if retry.Count > 0 {
@@ -335,15 +402,27 @@ func executeBuildLoop(
 
 		if retry.Count > retry.Max {
 			fmt.Printf("%s Exhausted retries. Escalating and reverting changes...\n", styleArrow)
-			revertCmd := tools.RunCommand{
-				Command: "git",
-				Args:    []string{"checkout", *commitSHA, "--", "."},
-				Dir:     ws.Root,
+			
+			// Restore from backups instead of git checkout
+			backupDir := filepath.Join(sessDir, "backups")
+			if _, err := os.Stat(backupDir); err == nil {
+				filepath.Walk(backupDir, func(path string, info os.FileInfo, err error) error {
+					if err != nil || info.IsDir() {
+						return nil
+					}
+					rel, _ := filepath.Rel(backupDir, path)
+					targetPath := filepath.Join(ws.Root, rel)
+					bytes, err := os.ReadFile(path)
+					if err == nil {
+						_ = os.WriteFile(targetPath, bytes, info.Mode())
+					}
+					return nil
+				})
 			}
-			revertCmd.Execute(ctx, nil)
+
 			planner.CurrentStep = "escalated"
 			_ = SavePlanner(sessDir, planner)
-			return fmt.Errorf("build failed and exhausted fix attempts. reverted to commit %s", *commitSHA)
+			return fmt.Errorf("build failed and exhausted fix attempts. reverted using file snapshots")
 		}
 
 		fmt.Printf("%s Attempting automatic fix...\n", styleArrow)
