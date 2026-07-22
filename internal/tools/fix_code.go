@@ -28,7 +28,8 @@ func (f FixCode) Name() string { return "fix_code" }
 // GoAI's GenerateObject auto-generates the JSON schema from this struct.
 type FixResponse struct {
 	File      string `json:"file"`
-	Content   string `json:"content"`
+	OldStr    string `json:"old_str"`
+	NewStr    string `json:"new_str"`
 	Reasoning string `json:"reasoning"`
 }
 
@@ -113,13 +114,15 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 	}
 
 	// 5. Write file
-	writer := WriteFile{
+	patcher := PatchFile{
 		WorkspaceRoot: f.WorkspaceRoot,
+		SessionDir:    f.SessionDir,
 		Path:          fix.File,
-		Content:       fix.Content,
+		OldStr:        fix.OldStr,
+		NewStr:        fix.NewStr,
 	}
 
-	writeRes, err := writer.Execute(ctx, sess)
+	writeRes, err := patcher.Execute(ctx, sess)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error(), Duration: time.Since(start)}, nil
 	}

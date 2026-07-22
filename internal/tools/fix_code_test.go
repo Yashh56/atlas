@@ -55,7 +55,7 @@ func TestFixCode_Success(t *testing.T) {
 	os.WriteFile(filepath.Join(ws, "main.go"), []byte("broken code"), 0o644)
 
 	model := &fakeLanguageModel{
-		response: `{"file": "main.go", "content": "fixed code", "reasoning": "fixed it"}`,
+		response: `{"file": "main.go", "old_str": "broken code", "new_str": "fixed code", "reasoning": "fixed it"}`,
 	}
 
 	tool := tools.FixCode{
