@@ -171,10 +171,14 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 
 			switch statusResult.Status {
 			case "live":
+				fmt.Println() // Complete the line of dots
 				return r.fetchServiceURL(ctx, serviceID, token)
 			case "build_failed", "update_failed", "canceled", "deactivated":
+				fmt.Println() // Complete the line of dots
 				return nil, fmt.Errorf("render deploy: deploy failed with status %q", statusResult.Status)
-				// keep polling for created, build_in_progress, update_in_progress
+			default:
+				// Print visual feedback while polling
+				fmt.Print(".")
 			}
 		}
 	}

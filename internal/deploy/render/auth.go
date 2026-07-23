@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/Yashh56/atlas/internal/cliutil"
@@ -38,7 +40,12 @@ func EnsureRenderAuthFull(
 		fmt.Fprintln(stdout, "  Not logged in to Render. Need a personal API key.")
 
 		if stdin == os.Stdin {
-			token, err = cliutil.PromptSecret("Render API Key")
+			open, _ := cliutil.PromptConfirm("  Open in browser now?")
+			if open {
+				fmt.Fprintln(stdout, "  Opening Render Dashboard to generate an API key...")
+				_ = openBrowser("https://dashboard.render.com/u/settings?add-api-key")
+			}
+			token, err = cliutil.PromptSecret("Paste your Render API Key here")
 		} else {
 			token, err = cliutil.PromptSecretFromReaderForTest("Render API Key", stdin)
 		}
@@ -96,8 +103,22 @@ func EnsureRenderAuthFull(
 	ownerID := owners[0].Owner.ID
 	email := owners[0].Owner.Email
 
-	// In the real code we should store ownerID in project.json, but here we just have config.Config.
 	// For now, we'll let the Provider.Deploy handle saving it to project.json, or we can just return success.
-	fmt.Fprintf(stdout, "✓ Render authenticated (%s, owner: %s)\n", email, ownerID)
+	fmt.Fprintf(stdout, "  Verified Render account: %s (owner: %s)\n", email, ownerID)
 	return nil
+}
+
+func openBrowser(url string) error {
+	var err error
+	switch runtime.GOOS {
+	case "linux":
+		err = exec.Command("xdg-open", url).Start()
+	case "windows":
+		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		err = exec.Command("open", url).Start()
+	default:
+		err = fmt.Errorf("unsupported platform")
+	}
+	return err
 }

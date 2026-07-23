@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/Yashh56/atlas/internal/config"
+	"github.com/Yashh56/atlas/internal/cliutil"
+	"os"
 )
 
 // CheckApproval determines if a deployment is approved based on config.
@@ -28,15 +30,20 @@ func CheckApproval(cfg *config.Config, dep *DeploymentState, in io.Reader, out i
 	fmt.Fprintf(out, "\n--- Deployment Approval ---\n")
 	fmt.Fprintf(out, "Provider:    %s\n", dep.Provider)
 	fmt.Fprintf(out, "Environment: %s\n", dep.Environment)
-	fmt.Fprintf(out, "Proceed with deployment? [y/N]: ")
-
-	scanner := bufio.NewScanner(in)
-	if !scanner.Scan() {
-		return false
-	}
 	
-	ans := strings.ToLower(strings.TrimSpace(scanner.Text()))
-	if ans == "y" || ans == "yes" {
+	var approved bool
+	if in == os.Stdin {
+		approved, _ = cliutil.PromptConfirm("Proceed with deployment?")
+	} else {
+		fmt.Fprintf(out, "Proceed with deployment? [y/N]: ")
+		scanner := bufio.NewScanner(in)
+		if scanner.Scan() {
+			ans := strings.ToLower(strings.TrimSpace(scanner.Text()))
+			approved = (ans == "y" || ans == "yes")
+		}
+	}
+
+	if approved {
 		now := time.Now().UTC()
 		user := "cli-user"
 		dep.Approval.Required = true
