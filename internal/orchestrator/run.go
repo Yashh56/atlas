@@ -11,6 +11,7 @@ import (
 	"github.com/Yashh56/atlas/internal/config"
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/deploy"
+	"github.com/Yashh56/atlas/internal/deploy/netlify"
 	"github.com/Yashh56/atlas/internal/deploy/render"
 	"github.com/Yashh56/atlas/internal/deploy/vercel"
 	"github.com/Yashh56/atlas/internal/llm"
@@ -44,6 +45,7 @@ type RunOptions struct {
 	ModelOverride string
 	Action        Action
 	IsInteractive bool
+	OutputDir     string
 }
 
 // Run executes the full Atlas pipeline by dispatching to modular steps.
@@ -107,6 +109,15 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	return executeDeploy(ctx, ws, sessDir, planner, cfg, dep, provider, providerName)
 }
 
+func ensureAtlasGitignore(wsRoot string) {
+	atlasDir := filepath.Join(wsRoot, ".atlas")
+	_ = os.MkdirAll(atlasDir, 0755)
+	gitignorePath := filepath.Join(atlasDir, ".gitignore")
+	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
+		_ = os.WriteFile(gitignorePath, []byte("*\n"), 0644)
+	}
+}
+
 func executeSetup(ctx context.Context, workspacePath, providerName string, opts RunOptions) (
 	cfg *config.Config,
 	ws *workspace.Workspace,
@@ -117,6 +128,7 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 	dep *DeploymentState,
 	err error,
 ) {
+	ensureAtlasGitignore(workspacePath)
 	cfg, err = config.Load(filepath.Join(workspacePath, ".atlas", "config.json"))
 	if err != nil {
 		err = fmt.Errorf("orchestrator: loading config: %w", err)
@@ -153,6 +165,7 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		registry := deploy.NewRegistry()
 		registry.Register(&vercel.VercelProvider{})
 		registry.Register(&render.RenderProvider{})
+		registry.Register(&netlify.NetlifyProvider{})
 
 		var ok bool
 		provider, ok = registry.Get(providerName)
@@ -171,6 +184,12 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 			fmt.Printf("%s Checking Render authentication...\n", styleArrow)
 			if authErr := render.EnsureRenderAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
 				err = fmt.Errorf("Render auth failed: %w", authErr)
+				return
+			}
+		} else if providerName == "netlify" {
+			fmt.Printf("%s Checking Netlify authentication...\n", styleArrow)
+			if authErr := netlify.EnsureNetlifyAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
+				err = fmt.Errorf("Netlify auth failed: %w", authErr)
 				return
 			}
 		}
@@ -268,7 +287,23 @@ func executeAnalyzeAndValidate(
 							Dir:     ws.Root,
 						}
 						stashCmd.Execute(ctx, sess)
-						return nil, "", "", true, nil // return early, didStash = true
+						
+						// Load project state so we return the framework/package manager
+						var commitSHA *string
+						proj, _ := LoadProject(sessDir)
+						if proj != nil && proj.Git.CommitSHA != nil {
+							commitSHA = proj.Git.CommitSHA
+						}
+						framework := ""
+						if proj != nil && proj.Framework != nil {
+							framework = *proj.Framework
+						}
+						packageManager := ""
+						if proj != nil && proj.PackageManager != nil {
+							packageManager = *proj.PackageManager
+						}
+						
+						return commitSHA, framework, packageManager, true, nil
 					}
 				case 3:
 					return nil, "", "", false, fmt.Errorf("deployment cancelled due to uncommitted changes")
