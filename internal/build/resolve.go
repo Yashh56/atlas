@@ -1,7 +1,11 @@
 // Package build provides build-command resolution and execution for Atlas.
 package build
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
 
 // ResolveBuildCommand returns the command and arguments to build the project
 // based on its detected framework and package manager. This is a pure function
@@ -65,3 +69,42 @@ func ResolveTestCommand(framework, packageManager string) (string, []string, err
 		return "", nil, fmt.Errorf("don't know how to test framework: %q", framework)
 	}
 }
+
+// ResolvePublishDir heuristic-matches the build output directory for static hosting.
+// Examples:
+//   - react + vite.config.ts -> dist
+//   - react + CRA -> build
+//   - nextjs -> out (requires static export)
+//   - go -> error (Netlify only serves static files)
+func ResolvePublishDir(framework, packageManager, workspaceRoot string) (string, error) {
+	if framework == "go" {
+		return "", fmt.Errorf("Netlify only serves static output; a Go project isn't a valid target")
+	}
+
+	if framework == "nextjs" {
+		// Next.js static exports go to "out" by default.
+		return "out", nil
+	}
+
+	if framework == "react" || framework == "node" {
+		// Heuristics for Vite
+		hasViteConfig := false
+		if _, err := os.Stat(filepath.Join(workspaceRoot, "vite.config.ts")); err == nil {
+			hasViteConfig = true
+		} else if _, err := os.Stat(filepath.Join(workspaceRoot, "vite.config.js")); err == nil {
+			hasViteConfig = true
+		}
+
+		if hasViteConfig {
+			return "dist", nil
+		}
+		
+		// Fallback for Create React App or other standard builds
+		if framework == "react" {
+			return "build", nil
+		}
+	}
+
+	return "", fmt.Errorf("could not determine the static output directory for framework %q. Please provide a manual --output-dir flag", framework)
+}
+

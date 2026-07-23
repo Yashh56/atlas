@@ -21,6 +21,7 @@ var (
 	deployAction     string
 	deployProvider   string
 	deployAllowDirty bool
+	outputDirFlag    string
 )
 
 // validProviders is the exhaustive list of accepted --provider values.
@@ -53,6 +54,7 @@ func init() {
 	rootCmd.Flags().StringVar(&deployAction, "action", "", "action mode: build, test, deploy, test-and-deploy")
 	rootCmd.Flags().StringVar(&deployProvider, "provider", "", "deployment provider (vercel, render, netlify, fly, railway)")
 	rootCmd.Flags().BoolVar(&deployAllowDirty, "allow-dirty", false, "skip the dirty working-tree check and proceed even with uncommitted changes")
+	rootCmd.Flags().StringVar(&outputDirFlag, "output-dir", "", "manual output directory override (e.g. build, dist, out)")
 
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(testllmCmd)
@@ -146,6 +148,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		ModelOverride: deployModel,
 		Action:        orchestrator.Action(deployAction),
 		IsInteractive: isInteractive,
+		OutputDir:     outputDirFlag,
 	}
 	return orchestrator.Run(cmd.Context(), path, strings.ToLower(deployProvider), opts)
 }
