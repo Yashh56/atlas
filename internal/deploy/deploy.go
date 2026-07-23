@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// DeployInput holds parameters for a deployment.
 type DeployInput struct {
 	WorkspaceRoot string
 	SessionDir    string // directory of the current session state
 	Environment   string // "production" for now
+	OutputDir     string // manual output dir override from CLI
 }
 
 // Deployment holds the result of a successful deployment.

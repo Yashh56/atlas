@@ -31,7 +31,7 @@ func (f *fakeRunner) LookPath(file string) (string, error) {
 	return "", errors.New(file + ": not found")
 }
 
-func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+func (f *fakeRunner) Run(_ context.Context, dir string, name string, args ...string) (string, error) {
 	key := name
 	if len(args) > 0 {
 		key = name + " " + args[0]
@@ -42,7 +42,7 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 	return "", errors.New("unexpected command: " + key)
 }
 
-func (f *fakeRunner) RunInteractive(_ context.Context, name string, args ...string) error {
+func (f *fakeRunner) RunInteractive(_ context.Context, dir string, name string, args ...string) error {
 	key := name
 	if len(args) > 0 {
 		key = name + " " + args[0]
@@ -67,7 +67,7 @@ func openTempStore(t *testing.T) *credentials.Store {
 func TestEnsureVercelAuth_EnvVar(t *testing.T) {
 	t.Setenv("VERCEL_TOKEN", "tok-xxx")
 	var out bytes.Buffer
-	err := vercel.EnsureVercelAuthFull(context.Background(), nil, &config.Config{}, &fakeRunner{}, strings.NewReader(""), &out)
+	err := vercel.EnsureVercelAuthFull(context.Background(), nil, &config.Config{}, &fakeRunner{lookPaths: map[string]bool{"vercel": true}}, strings.NewReader(""), &out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestEnsureVercelAuth_StoredToken(t *testing.T) {
 	_ = store.SetSecret("vercel", "mock-token")
 
 	var out bytes.Buffer
-	err := vercel.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, &fakeRunner{}, strings.NewReader(""), &out)
+	err := vercel.EnsureVercelAuthFull(context.Background(), store, &config.Config{}, &fakeRunner{lookPaths: map[string]bool{"vercel": true}}, strings.NewReader(""), &out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestEnsureVercelAuth_CLILoginSucceeds(t *testing.T) {
 	whoamiCall := 0
 	runner := &fakeRunnerDynamic{
 		lookPaths: map[string]bool{"vercel": true},
-		runFn: func(name string, args ...string) (string, error) {
+		runFn: func(dir string, name string, args ...string) (string, error) {
 			key := name
 			if len(args) > 0 {
 				key += " " + args[0]
@@ -169,7 +169,7 @@ func TestEnsureVercelAuth_CLILoginSucceeds(t *testing.T) {
 			}
 			return "", errors.New("unexpected: " + key)
 		},
-		runInteractiveFn: func(name string, args ...string) error {
+		runInteractiveFn: func(dir string, name string, args ...string) error {
 			if name == "vercel" && len(args) > 0 && args[0] == "login" {
 				return nil // login succeeds
 			}
@@ -192,10 +192,10 @@ func TestEnsureVercelAuth_CLILoginFails(t *testing.T) {
 	store := openTempStore(t)
 	runner := &fakeRunnerDynamic{
 		lookPaths: map[string]bool{"vercel": true},
-		runFn: func(name string, args ...string) (string, error) {
+		runFn: func(dir string, name string, args ...string) (string, error) {
 			return "", errors.New("not logged in")
 		},
-		runInteractiveFn: func(name string, args ...string) error {
+		runInteractiveFn: func(dir string, name string, args ...string) error {
 			return errors.New("login failed")
 		},
 	}
@@ -213,8 +213,8 @@ func TestEnsureVercelAuth_CLILoginFails(t *testing.T) {
 // fakeRunnerDynamic allows per-call logic via function callbacks.
 type fakeRunnerDynamic struct {
 	lookPaths        map[string]bool
-	runFn            func(name string, args ...string) (string, error)
-	runInteractiveFn func(name string, args ...string) error
+	runFn            func(dir string, name string, args ...string) (string, error)
+	runInteractiveFn func(dir string, name string, args ...string) error
 }
 
 func (f *fakeRunnerDynamic) LookPath(file string) (string, error) {
@@ -223,9 +223,9 @@ func (f *fakeRunnerDynamic) LookPath(file string) (string, error) {
 	}
 	return "", errors.New(file + ": not found")
 }
-func (f *fakeRunnerDynamic) Run(_ context.Context, name string, args ...string) (string, error) {
-	return f.runFn(name, args...)
+func (f *fakeRunnerDynamic) Run(_ context.Context, dir string, name string, args ...string) (string, error) {
+	return f.runFn(dir, name, args...)
 }
-func (f *fakeRunnerDynamic) RunInteractive(_ context.Context, name string, args ...string) error {
-	return f.runInteractiveFn(name, args...)
+func (f *fakeRunnerDynamic) RunInteractive(_ context.Context, dir string, name string, args ...string) error {
+	return f.runInteractiveFn(dir, name, args...)
 }
