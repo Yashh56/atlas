@@ -52,7 +52,7 @@ func runProviders(_ *cobra.Command, _ []string) error {
 	fmt.Println("DEPLOY PROVIDERS")
 	printProviderStatus("vercel", "VERCEL_TOKEN", store)
 	printProviderStatus("render", "RENDER_TOKEN", store)
-	printProviderStatus("netlify", "NETLIFY_AUTH_TOKEN", store)
+	printProviderStatus("netlify", "NETLIFY_TOKEN", store)
 	printProviderStatus("fly", "FLY_API_TOKEN", store)
 	printProviderStatus("railway", "RAILWAY_API_TOKEN", store)
 	return nil
