@@ -292,7 +292,7 @@ func (m *wizardModel) updateProviderSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "enter" {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
-				if i.title != "vercel" && i.title != "render" {
+				if i.title != "vercel" && i.title != "render" && i.title != "netlify" {
 					return m, nil
 				}
 				m.selectedProvider = i.title
@@ -303,7 +303,7 @@ func (m *wizardModel) updateProviderSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.step = stepVercelConfirm
 					return m, nil
 				}
-				// For render, if not configured, we just advance and let the CLI prompt.
+				// For render and netlify, if not configured, we just advance and let the CLI prompt.
 				return m, func() tea.Msg { return advanceStepMsg{} }
 			}
 		}
@@ -395,23 +395,26 @@ func createProviderList(store *credentials.Store) list.Model {
 
 	for _, p := range providers {
 		status := "✗ not configured"
+		var envVar string
 		if p == "vercel" {
-			if os.Getenv("VERCEL_TOKEN") != "" {
-				status = "✓ ENV var detected"
-			} else if store != nil {
-				if s, _ := store.GetSecret("vercel"); s != "" {
-					status = "✓ stored"
-				}
-			}
+			envVar = "VERCEL_TOKEN"
 		} else if p == "render" {
-			if os.Getenv("RENDER_TOKEN") != "" {
-				status = "✓ ENV var detected"
-			} else if store != nil {
-				if s, _ := store.GetSecret("render"); s != "" {
+			envVar = "RENDER_TOKEN"
+		} else if p == "netlify" {
+			envVar = "NETLIFY_TOKEN"
+		}
+
+		if envVar != "" && os.Getenv(envVar) != "" {
+			status = "✓ ENV var detected"
+		} else if envVar != "" && store != nil {
+			if meta, ok, _ := store.GetMeta(p); ok {
+				if meta.Method == credentials.MethodStoredToken {
 					status = "✓ stored"
+				} else if meta.Method == credentials.MethodCLISession {
+					status = "✓ CLI logged in"
 				}
 			}
-		} else {
+		} else if envVar == "" {
 			status = "not implemented yet"
 		}
 		items = append(items, item{title: p, desc: status})
