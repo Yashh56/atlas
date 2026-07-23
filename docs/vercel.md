@@ -29,7 +29,7 @@ To deploy to Vercel, you need to provide your Vercel credentials to Atlas. You c
 To trigger a deployment to Vercel, you simply pass `vercel` as the deployment provider:
 
 ```bash
-atlas deploy /path/to/project --provider vercel
+atlas /path/to/project --action deploy --provider vercel
 ```
 
 ### Authentication Flow
