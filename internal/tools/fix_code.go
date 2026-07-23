@@ -94,7 +94,7 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 	userPrompt := fmt.Sprintf("Framework: %s\n\nBuild Log Excerpt:\n```\n%s\n```\n%s", framework, buildLog, fileContext)
 
 	// 4. Call LLM with structured generation — GoAI handles JSON schema enforcement
-	fix, err := llm.GenerateStructured[FixResponse](ctx, f.Model, systemPrompt, userPrompt)
+	fix, usage, err := llm.GenerateStructured[FixResponse](ctx, f.Model, systemPrompt, userPrompt)
 	if err != nil {
 		// THIS is the error that was going missing before — make sure it actually
 		// reaches ToolResult.Error and gets printed by the orchestrator.
@@ -105,11 +105,21 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 		}, nil
 	}
 
+	var tu *TokenUsage
+	if usage != nil {
+		tu = &TokenUsage{
+			InputTokens:  usage.InputTokens,
+			OutputTokens: usage.OutputTokens,
+			TotalTokens:  usage.TotalTokens,
+		}
+	}
+
 	if fix.File == "" {
 		return ToolResult{
-			Success:  false,
-			Error:    fmt.Sprintf("model declined to fix: %s", fix.Reasoning),
-			Duration: time.Since(start),
+			Success:    false,
+			Error:      "LLM did not return a file to modify",
+			Duration:   time.Since(start),
+			TokenUsage: tu,
 		}, nil
 	}
 
@@ -124,17 +134,18 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 
 	writeRes, err := patcher.Execute(ctx, sess)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error(), Duration: time.Since(start)}, nil
+		return ToolResult{Success: false, Error: err.Error(), Duration: time.Since(start), TokenUsage: tu}, nil
 	}
 	if !writeRes.Success {
-		return ToolResult{Success: false, Error: writeRes.Error, Duration: time.Since(start)}, nil
+		return ToolResult{Success: false, Error: writeRes.Error, Duration: time.Since(start), TokenUsage: tu}, nil
 	}
 
 	output := fmt.Sprintf("Fixed: %s — %q", fix.File, fix.Reasoning)
 	return ToolResult{
-		Success:  true,
-		Output:   output,
-		Duration: time.Since(start),
+		Success:    true,
+		Output:     output,
+		Duration:   time.Since(start),
+		TokenUsage: tu,
 	}, nil
 }
 

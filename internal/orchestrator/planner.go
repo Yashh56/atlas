@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Yashh56/atlas/internal/state"
+	"github.com/Yashh56/atlas/internal/tools"
 )
 
 // RetryInfo tracks retry state for a single pipeline step.
@@ -30,6 +31,17 @@ type PlannerState struct {
 	Failed      []string             `json:"failed"`
 	Retries     map[string]RetryInfo `json:"retries"`
 	Error       ErrorInfo            `json:"error"`
+	TokenUsage  tools.TokenUsage     `json:"token_usage"`
+}
+
+// AddUsage accumulates the token usage from a tool execution.
+func (p *PlannerState) AddUsage(u *tools.TokenUsage) {
+	if u == nil {
+		return
+	}
+	p.TokenUsage.InputTokens += u.InputTokens
+	p.TokenUsage.OutputTokens += u.OutputTokens
+	p.TokenUsage.TotalTokens += u.TotalTokens
 }
 
 const plannerFile = "planner.json"

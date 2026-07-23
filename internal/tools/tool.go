@@ -11,9 +11,17 @@ import (
 // ToolResult holds the outcome of a single tool execution.
 type ToolResult struct {
 	Success  bool
-	Output   string
-	Error    string
-	Duration time.Duration
+	Output     string
+	Error      string
+	Duration   time.Duration
+	TokenUsage *TokenUsage
+}
+
+// TokenUsage tracks LLM usage for a tool execution.
+type TokenUsage struct {
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
 }
 
 // Tool is the interface every Atlas tool must implement.

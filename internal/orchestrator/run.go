@@ -74,6 +74,11 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 				fmt.Printf("%s Stash restored successfully.\n", styleCheck)
 			}
 		}
+
+		// Print token usage if tracking is enabled/recorded, even if zero.
+		if planner != nil {
+			fmt.Printf("\n%s Session Token Usage: %d total (%d prompt, %d completion)\n", styleCheck, planner.TokenUsage.TotalTokens, planner.TokenUsage.InputTokens, planner.TokenUsage.OutputTokens)
+		}
 	}()
 
 	commitSHA, framework, packageManager, didStash, err := executeAnalyzeAndValidate(ctx, ws, sess, sessDir, planner, providerName, opts)
@@ -473,6 +478,8 @@ func executeBuildLoop(
 		if err != nil {
 			return fmt.Errorf("orchestrator: fix_code: %w", err)
 		}
+
+		planner.AddUsage(fixRes.TokenUsage)
 
 		if fixRes.Success {
 			fmt.Printf("  %s\n\n", fixRes.Output)

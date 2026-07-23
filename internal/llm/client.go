@@ -143,14 +143,14 @@ func (c *goaiClient) Complete(ctx context.Context, systemPrompt, userPrompt stri
 
 // GenerateStructured is a free generic function, not a Client method, because
 // Go interfaces can't have generic methods. FixCode calls this directly.
-func GenerateStructured[T any](ctx context.Context, model Model, systemPrompt, userPrompt string) (T, error) {
+func GenerateStructured[T any](ctx context.Context, model Model, systemPrompt, userPrompt string) (T, *provider.Usage, error) {
 	var zero T
 	result, err := goai.GenerateObject[T](ctx, model,
 		goai.WithSystem(systemPrompt),
 		goai.WithPrompt(userPrompt),
 	)
 	if err != nil {
-		return zero, err
+		return zero, nil, err
 	}
-	return result.Object, nil
+	return result.Object, &result.Usage, nil
 }
