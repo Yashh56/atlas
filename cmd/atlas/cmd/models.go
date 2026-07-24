@@ -71,7 +71,7 @@ func runModels(_ *cobra.Command, _ []string) error {
 	if activeName != "" {
 		header += fmt.Sprintf("   (active: %s — from config.json's llm_provider)", activeName)
 	}
-	fmt.Println(header)
+	fmt.Println(cliutil.FormatHeader(header))
 
 	store, _ := openCredentials()
 
@@ -84,22 +84,22 @@ func runModels(_ *cobra.Command, _ []string) error {
 			if cfg, err := config.Load(configPath); err == nil && cfg.LocalLLMBaseURL != "" {
 				baseURL = cfg.LocalLLMBaseURL
 			}
-			fmt.Printf("  %s%s–  configured base URL: %s (not checked — no key needed)\n", p.Name, pad, baseURL)
+			fmt.Printf("  %s%s%s  configured base URL: %s (not checked — no key needed)\n", cliutil.StyleHighlight.Render(p.Name), pad, cliutil.IconDot, cliutil.StyleSubtext.Render(baseURL))
 			continue
 		}
 
 		// Check store first
 		if store != nil {
 			if meta, ok, _ := store.GetMeta("llm:" + p.Name); ok && meta.Method == credentials.MethodStoredToken {
-				fmt.Printf("  %s%s✓ stored\n", p.Name, pad)
+				fmt.Printf("  %s%s%s stored\n", cliutil.StyleHighlight.Render(p.Name), pad, cliutil.IconSuccess)
 				continue
 			}
 		}
 
 		if os.Getenv(p.EnvVar) != "" {
-			fmt.Printf("  %s%s✓ %s detected\n", p.Name, pad, p.EnvVar)
+			fmt.Printf("  %s%s%s %s detected\n", cliutil.StyleHighlight.Render(p.Name), pad, cliutil.IconSuccess, p.EnvVar)
 		} else {
-			fmt.Printf("  %s%s✗ %s not set\n", p.Name, pad, p.EnvVar)
+			fmt.Printf("  %s%s%s %s not set\n", cliutil.StyleHighlight.Render(p.Name), pad, cliutil.IconError, p.EnvVar)
 		}
 	}
 	return nil
@@ -146,7 +146,7 @@ func runModelsSet(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("storing metadata: %w", err)
 	}
 
-	fmt.Println("✓ Stored. Run `atlas models` to confirm.")
+	fmt.Printf("%s Stored. Run `atlas models` to confirm.\n", cliutil.IconSuccess)
 	return nil
 }
 
@@ -186,6 +186,6 @@ func runModelsUnset(_ *cobra.Command, args []string) error {
 		Method:   credentials.MethodEnvVar,
 	})
 
-	fmt.Printf("✓ Removed stored key for %q.\n", provider)
+	fmt.Printf("%s Removed stored key for %q.\n", cliutil.IconSuccess, provider)
 	return nil
 }

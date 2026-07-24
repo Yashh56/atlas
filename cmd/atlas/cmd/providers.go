@@ -13,6 +13,7 @@ import (
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/orchestrator"
 	"github.com/Yashh56/atlas/internal/workspace"
+	"github.com/Yashh56/atlas/internal/cliutil"
 )
 
 var providersCmd = &cobra.Command{
@@ -49,7 +50,7 @@ func runProviders(_ *cobra.Command, _ []string) error {
 		store = nil
 	}
 
-	fmt.Println("DEPLOY PROVIDERS")
+	fmt.Println(cliutil.FormatHeader("DEPLOY PROVIDERS"))
 	printProviderStatus("vercel", "VERCEL_TOKEN", store)
 	printProviderStatus("render", "RENDER_TOKEN", store)
 	printProviderStatus("netlify", "NETLIFY_TOKEN", store)
@@ -65,7 +66,7 @@ func printProviderStatus(name, envVar string, store *credentials.Store) {
 
 	// 1. Check env var first.
 	if os.Getenv(envVar) != "" {
-		fmt.Printf("  %s%s✓ authenticated   (env_var, %s)\n", name, pad, envVar)
+		fmt.Printf("  %s%s%s authenticated   (env_var, %s)\n", cliutil.StyleHighlight.Render(name), pad, cliutil.IconSuccess, envVar)
 		return
 	}
 
@@ -77,14 +78,14 @@ func printProviderStatus(name, envVar string, store *credentials.Store) {
 			if account == "" {
 				account = "unknown"
 			}
-			fmt.Printf("  %s%s✓ authenticated   (%s, %s, verified %s)\n",
-				name, pad, meta.Method, account, verified)
+			fmt.Printf("  %s%s%s authenticated   (%s, %s, verified %s)\n",
+				cliutil.StyleHighlight.Render(name), pad, cliutil.IconSuccess, meta.Method, account, cliutil.StyleSubtext.Render(verified))
 			return
 		}
 	}
 
 	// 3. Not configured.
-	fmt.Printf("  %s%s✗ not configured\n", name, pad)
+	fmt.Printf("  %s%s%s not configured\n", cliutil.StyleHighlight.Render(name), pad, cliutil.IconError)
 }
 
 func runProvidersSet(cmd *cobra.Command, args []string) error {
@@ -115,7 +116,7 @@ func runProvidersSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("storing metadata: %w", err)
 	}
 
-	fmt.Println("✓ Stored token.")
+	fmt.Printf("%s Stored token.\n", cliutil.IconSuccess)
 
 	if provider == "render" {
 		serviceID, _ := cmd.Flags().GetString("service-id")
@@ -134,7 +135,7 @@ func runProvidersSet(cmd *cobra.Command, args []string) error {
 			if err := orchestrator.SaveProject(filepath.Join(ws.Root, ".atlas"), &proj); err != nil {
 				return fmt.Errorf("storing project config: %w", err)
 			}
-			fmt.Println("✓ Stored Render service ID in project configuration.")
+			fmt.Printf("%s Stored Render service ID in project configuration.\n", cliutil.IconSuccess)
 		}
 	}
 
@@ -168,6 +169,6 @@ func runProvidersUnset(_ *cobra.Command, args []string) error {
 		Method:   credentials.MethodEnvVar,
 	})
 
-	fmt.Printf("✓ Removed stored key for %q.\n", provider)
+	fmt.Printf("%s Removed stored key for %q.\n", cliutil.IconSuccess, provider)
 	return nil
 }

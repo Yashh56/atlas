@@ -13,6 +13,7 @@ import (
 
 	"github.com/Yashh56/atlas/internal/orchestrator"
 	"github.com/Yashh56/atlas/internal/version"
+	"github.com/Yashh56/atlas/internal/cliutil"
 )
 
 var (
@@ -64,6 +65,31 @@ func init() {
 	if vf := rootCmd.Flags().Lookup("version"); vf != nil {
 		vf.Shorthand = "v"
 	}
+
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		fmt.Printf("\n%s\n", cliutil.FormatHeader(fmt.Sprintf("%s - %s", cmd.Name(), cmd.Short)))
+		if cmd.Long != "" {
+			fmt.Printf("\n%s\n", cmd.Long)
+		}
+		fmt.Printf("\n%s\n", cliutil.StyleHighlight.Render("USAGE"))
+		if cmd.Runnable() {
+			fmt.Printf("  %s\n", cmd.UseLine())
+		}
+		if cmd.HasAvailableSubCommands() {
+			fmt.Printf("  %s [command]\n", cmd.CommandPath())
+			fmt.Printf("\n%s\n", cliutil.StyleHighlight.Render("AVAILABLE COMMANDS"))
+			for _, c := range cmd.Commands() {
+				if c.IsAvailableCommand() {
+					fmt.Printf("  %-15s %s\n", cliutil.StylePrompt.Render(c.Name()), cliutil.StyleSubtext.Render(c.Short))
+				}
+			}
+		}
+		if cmd.HasAvailableLocalFlags() {
+			fmt.Printf("\n%s\n", cliutil.StyleHighlight.Render("FLAGS"))
+			fmt.Printf("%s\n", cliutil.StyleSubtext.Render(strings.TrimRight(cmd.LocalFlags().FlagUsages(), "\n")))
+		}
+		fmt.Println()
+	})
 }
 
 func actionNeedsProvider(a orchestrator.Action) bool {
