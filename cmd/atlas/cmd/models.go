@@ -19,14 +19,15 @@ import (
 var llmProviderEnvVars = []struct {
 	Name   string
 	EnvVar string
+	Models []string
 }{
-	{"anthropic", "ANTHROPIC_API_KEY"},
-	{"openai", "OPENAI_API_KEY"},
-	{"gemini", "GEMINI_API_KEY"},
-	{"mistral", "MISTRAL_API_KEY"},
-	{"groq", "GROQ_API_KEY"},
-	{"grok", "XAI_API_KEY"},
-	{"local", ""}, // no key required
+	{"anthropic", "ANTHROPIC_API_KEY", []string{"claude-3-5-sonnet-20240620", "claude-3-opus-20240229", "claude-3-haiku-20240307"}},
+	{"openai", "OPENAI_API_KEY", []string{"gpt-4o", "gpt-4-turbo", "gpt-4o-mini"}},
+	{"gemini", "GEMINI_API_KEY", []string{"gemini-1.5-pro-latest", "gemini-1.5-flash-latest"}},
+	{"mistral", "MISTRAL_API_KEY", []string{"mistral-large-latest", "mistral-small-latest"}},
+	{"groq", "GROQ_API_KEY", []string{"llama3-70b-8192", "mixtral-8x7b-32768"}},
+	{"grok", "XAI_API_KEY", []string{"grok-beta"}},
+	{"local", "", []string{"llama3", "mistral"}}, // no key required
 }
 
 var promptSecret = cliutil.PromptSecret
@@ -101,8 +102,26 @@ func runModels(_ *cobra.Command, _ []string) error {
 		} else {
 			fmt.Printf("  %s%s%s %s not set\n", cliutil.StyleHighlight.Render(p.Name), pad, cliutil.IconError, p.EnvVar)
 		}
+		
+		for _, m := range p.Models {
+			fmt.Printf("    %s %s\n", cliutil.StyleSubtext.Render("↳"), cliutil.StyleSubtext.Render(m))
+		}
 	}
 	return nil
+}
+
+func getProviderForModel(modelName string) string {
+	for _, p := range llmProviderEnvVars {
+		if p.Name == modelName {
+			return p.Name // fallback for legacy
+		}
+		for _, m := range p.Models {
+			if m == modelName {
+				return p.Name
+			}
+		}
+	}
+	return "local"
 }
 
 func getLLMEnvVar(provider string) string {

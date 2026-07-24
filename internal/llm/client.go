@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider"
@@ -48,65 +49,80 @@ func resolveAPIKey(store *credentials.Store, provider, envVar string) (string, e
 
 // ResolveModel maps Atlas's config.LLMProvider value to a GoAI provider model.
 func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
-	modelName := cfg.DefaultModel
+	modelName := cfg.LLMProvider // user now selects exact model name here
 
-	switch cfg.LLMProvider {
+	// Legacy fallback if someone still has "anthropic" in their config
+	switch modelName {
 	case "anthropic":
-		if modelName == "" || modelName == "claude-sonnet-4-6" {
-			modelName = "claude-3-5-sonnet-20240620"
-		}
+		modelName = "claude-3-5-sonnet-20240620"
+	case "openai":
+		modelName = "gpt-4o"
+	case "gemini":
+		modelName = "gemini-1.5-pro-latest"
+	case "mistral":
+		modelName = "mistral-large-latest"
+	case "groq":
+		modelName = "llama3-70b-8192"
+	case "grok":
+		modelName = "grok-beta"
+	case "local":
+		modelName = "llama3"
+	}
+
+	// Support cfg.DefaultModel if it's explicitly provided and valid
+	if cfg.DefaultModel != "" && cfg.DefaultModel != "claude-sonnet-4-6" {
+		modelName = cfg.DefaultModel
+	}
+
+	if modelName == "" {
+		modelName = "claude-3-5-sonnet-20240620"
+	}
+
+	// Match by prefix or explicit name
+	if strings.HasPrefix(modelName, "claude") {
 		key, err := resolveAPIKey(store, "anthropic", "ANTHROPIC_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("ANTHROPIC_API_KEY", key)
 		return anthropic.Chat(modelName), nil
-	case "openai":
-		if modelName == "" || modelName == "claude-sonnet-4-6" {
-			modelName = "gpt-4o"
-		}
+	}
+
+	if strings.HasPrefix(modelName, "gpt-") || strings.HasPrefix(modelName, "o1-") {
 		key, err := resolveAPIKey(store, "openai", "OPENAI_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("OPENAI_API_KEY", key)
 		return openai.Chat(modelName), nil
-	case "gemini":
-		if modelName == "" || modelName == "claude-sonnet-4-6" {
-			modelName = "gemini-1.5-pro-latest"
-		}
+	}
+
+	if strings.HasPrefix(modelName, "gemini") {
 		key, err := resolveAPIKey(store, "gemini", "GEMINI_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("GEMINI_API_KEY", key)
 		return google.Chat(modelName), nil
-	case "mistral":
-		if modelName == "" || modelName == "claude-sonnet-4-6" {
-			modelName = "mistral-large-latest"
-		}
+	}
+
+	if strings.HasPrefix(modelName, "mistral") || strings.HasPrefix(modelName, "pixtral") {
 		key, err := resolveAPIKey(store, "mistral", "MISTRAL_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("MISTRAL_API_KEY", key)
 		return mistral.Chat(modelName), nil
-	case "groq":
-		if modelName == "" || modelName == "claude-sonnet-4-6" {
-			modelName = "llama3-70b-8192"
-		}
+	}
+
+	if strings.HasPrefix(modelName, "llama3-") || strings.HasPrefix(modelName, "mixtral-") {
 		key, err := resolveAPIKey(store, "groq", "GROQ_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("GROQ_API_KEY", key)
 		return groq.Chat(modelName), nil
-	case "grok":
-		if modelName == "" || modelName == "claude-sonnet-4-6" {
-			modelName = "grok-beta"
-		}
+	}
+
+	if strings.HasPrefix(modelName, "grok") {
 		key, err := resolveAPIKey(store, "grok", "XAI_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("XAI_API_KEY", key)
 		return xai.Chat(modelName), nil
-	case "local":
-		if modelName == "" || modelName == "claude-sonnet-4-6" {
-			modelName = "llama3"
-		}
-		return compat.Chat(modelName, compat.WithBaseURL(cfg.LocalLLMBaseURL)), nil
-	default:
-		return nil, fmt.Errorf("unknown llm_provider: %s", cfg.LLMProvider)
 	}
+
+	// Fallback to local
+	return compat.Chat(modelName, compat.WithBaseURL(cfg.LocalLLMBaseURL)), nil
 }
 
 // Client covers plain-text completion — used anywhere structured output isn't needed.

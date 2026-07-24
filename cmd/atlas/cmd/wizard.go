@@ -227,7 +227,8 @@ func (m *wizardModel) updateModelSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
 				m.selectedModel = i.title
-				if strings.Contains(i.desc, "✓") || m.selectedModel == "local" {
+				provider := getProviderForModel(m.selectedModel)
+				if strings.Contains(i.desc, "✓") || provider == "local" {
 					return m, func() tea.Msg { return advanceStepMsg{} }
 				}
 				m.step = stepModelInput
@@ -247,9 +248,10 @@ func (m *wizardModel) updateModelInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "enter" {
 			key := strings.TrimSpace(m.textInput.Value())
 			if key != "" && m.store != nil {
-				m.store.SetSecret("llm:"+m.selectedModel, key)
+				provider := getProviderForModel(m.selectedModel)
+				m.store.SetSecret("llm:"+provider, key)
 				m.store.SetMeta(credentials.ProviderCredential{
-					Provider:   m.selectedModel,
+					Provider:   provider,
 					Method:     credentials.MethodStoredToken,
 				})
 			}
@@ -364,23 +366,25 @@ func (i item) Description() string { return i.desc }
 func (i item) FilterValue() string { return i.title }
 
 func createModelList(store *credentials.Store) list.Model {
-	providers := []string{"anthropic", "openai", "gemini", "mistral", "groq", "grok", "local"}
-	items := make([]list.Item, 0, len(providers))
+	var items []list.Item
 
-	for _, p := range providers {
+	for _, p := range llmProviderEnvVars {
 		status := "✗ not configured"
-		if p == "local" {
+		if p.Name == "local" {
 			status = "no key needed"
 		} else {
-			if os.Getenv(strings.ToUpper(p)+"_API_KEY") != "" {
+			if os.Getenv(p.EnvVar) != "" {
 				status = "✓ ENV var detected"
 			} else if store != nil {
-				if s, _ := store.GetSecret("llm:" + p); s != "" {
+				if s, _ := store.GetSecret("llm:" + p.Name); s != "" {
 					status = "✓ stored"
 				}
 			}
 		}
-		items = append(items, item{title: p, desc: status})
+
+		for _, m := range p.Models {
+			items = append(items, item{title: m, desc: fmt.Sprintf("%s (%s)", p.Name, status)})
+		}
 	}
 
 	l := list.New(items, list.NewDefaultDelegate(), 50, 15)
