@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,7 +73,7 @@ func (n *NetlifyProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*d
 		}
 		siteID = newID
 		proj.NetlifySiteID = siteID
-		
+
 		_ = state.SaveJSON(in.SessionDir, "project.json", &proj)
 		_ = state.SaveJSON(filepath.Join(in.WorkspaceRoot, ".atlas"), "project.json", &proj)
 	}
@@ -81,7 +83,9 @@ func (n *NetlifyProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*d
 		args = append(args, "--auth", in.Token)
 	}
 	if outDir != "" {
-		args = append(args, "--dir", outDir)
+		if _, err := os.Stat(filepath.Join(in.WorkspaceRoot, outDir)); err == nil {
+			args = append(args, "--dir", outDir)
+		}
 	}
 	outStr, err := n.runner().Run(ctx, in.WorkspaceRoot, "netlify", args...)
 	if err != nil {
@@ -89,9 +93,10 @@ func (n *NetlifyProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*d
 	}
 
 	var out struct {
-		URL string `json:"url"`
+		URL      string `json:"url"`
+		DeployID string `json:"deploy_id"`
 	}
-	
+
 	jsonStr, extractErr := extractJSONObject(outStr)
 	if extractErr != nil {
 		return nil, fmt.Errorf("failed to extract JSON from deploy output: %w\nOutput was: %s", extractErr, outStr)
@@ -102,10 +107,60 @@ func (n *NetlifyProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*d
 	}
 
 	return &deploy.Deployment{
-		URL:        out.URL,
-		Provider:   "netlify",
-		DeployedAt: time.Now().UTC(),
+		URL:         out.URL,
+		Provider:    "netlify",
+		ProviderRef: out.DeployID,
+		DeployedAt:  time.Now().UTC(),
 	}, nil
+}
+
+func (n *NetlifyProvider) HealthCheck(ctx context.Context, d *deploy.Deployment) error {
+	return deploy.HTTPHealthCheck(ctx, d.URL, 200)
+}
+
+func (n *NetlifyProvider) Rollback(ctx context.Context, to *deploy.Deployment, in deploy.DeployInput) error {
+	if to.ProviderRef == "" {
+		return fmt.Errorf("netlify rollback: no deploy_id (ProviderRef) found in previous deployment")
+	}
+
+	var proj struct {
+		NetlifySiteID *string `json:"netlify_site_id"`
+	}
+	_ = state.LoadJSON(in.SessionDir, "project.json", &proj)
+
+	siteID := ""
+	if proj.NetlifySiteID != nil {
+		siteID = *proj.NetlifySiteID
+	}
+	if siteID == "" {
+		return fmt.Errorf("netlify rollback: no netlify_site_id found in project.json")
+	}
+
+	token := in.Token
+	if token == "" {
+		return fmt.Errorf("netlify rollback: no auth token provided")
+	}
+
+	url := fmt.Sprintf("https://api.netlify.com/api/v1/sites/%s/deploys/%s/restore", siteID, to.ProviderRef)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	if err != nil {
+		return fmt.Errorf("netlify rollback: failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("netlify rollback: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("netlify rollback: api returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
 }
 
 func resolveNetlifySite(ctx context.Context, runner deploy.CommandRunner, workspaceRoot string, inToken string) (string, error) {
@@ -115,20 +170,60 @@ func resolveNetlifySite(ctx context.Context, runner deploy.CommandRunner, worksp
 	if err == nil {
 		return id, nil
 	}
-	
+
 	// Check if collision
 	if strings.Contains(err.Error(), "already taken") || strings.Contains(strings.ToLower(err.Error()), "taken") || err != nil {
 		suffix := make([]byte, 2)
 		rand.Read(suffix)
 		newName := fmt.Sprintf("%s-%s", baseName, hex.EncodeToString(suffix))
-		
+
 		return createSite(ctx, runner, workspaceRoot, newName, inToken)
 	}
-	
+
 	return "", err
 }
 
 func createSite(ctx context.Context, runner deploy.CommandRunner, workspaceRoot string, name string, token string) (string, error) {
+	// First, fetch accounts to get the team slug. This fixes the "No teams available" error.
+	accountArgs := []string{"api", "listAccountsForUser"}
+	if token != "" {
+		accountArgs = append(accountArgs, "--auth", token)
+	}
+	
+	accountsOut, err := runner.Run(ctx, workspaceRoot, "netlify", accountArgs...)
+	if err != nil {
+		if strings.Contains(accountsOut, "Unauthorized") || strings.Contains(accountsOut, "401") {
+			return "", fmt.Errorf("netlify authentication failed: Unauthorized. Please check if your provided auth token is valid. (Token used: %s)", token)
+		}
+	} else {
+		start := strings.Index(accountsOut, "[\n")
+		if start == -1 {
+			start = strings.Index(accountsOut, "[ \n")
+		}
+		if start == -1 {
+			start = strings.Index(accountsOut, "[")
+		}
+		end := strings.LastIndex(accountsOut, "\n]")
+		if start != -1 && end != -1 && start < end {
+			jsonStr := accountsOut[start : end+2]
+			var accounts []struct {
+				Slug string `json:"slug"`
+			}
+			if unmarshalErr := json.Unmarshal([]byte(jsonStr), &accounts); unmarshalErr == nil && len(accounts) > 0 {
+				// Found an account slug, let's use it
+				args := []string{"sites:create", "--name", name, "-a", accounts[0].Slug, "--json"}
+				if token != "" {
+					args = append(args, "--auth", token)
+				}
+				outStr, err := runner.Run(ctx, workspaceRoot, "netlify", args...)
+				if err != nil {
+					return "", fmt.Errorf("creation failed: %w (output: %s)", err, outStr)
+				}
+				return parseSiteCreationJSON(outStr)
+			}
+		}
+	}
+
 	args := []string{"sites:create", "--name", name, "--json"}
 	if token != "" {
 		args = append(args, "--auth", token)
@@ -137,21 +232,26 @@ func createSite(ctx context.Context, runner deploy.CommandRunner, workspaceRoot 
 	if err != nil {
 		return "", fmt.Errorf("creation failed: %w (output: %s)", err, outStr)
 	}
+	return parseSiteCreationJSON(outStr)
+}
 
-	var out struct {
-		ID string `json:"id"`
-	}
-	
+func parseSiteCreationJSON(outStr string) (string, error) {
+
 	jsonStr, extractErr := extractJSONObject(outStr)
 	if extractErr != nil {
 		return "", fmt.Errorf("failed to extract JSON from sites:create output: %w\nOutput was: %s", extractErr, outStr)
 	}
 
-	if err := json.Unmarshal([]byte(jsonStr), &out); err != nil {
-		return "", fmt.Errorf("failed to parse netlify sites:create json: %w", err)
+	var out struct {
+		ID string `json:"id"`
 	}
+
+	if err := json.Unmarshal([]byte(jsonStr), &out); err != nil {
+		return "", fmt.Errorf("failed to parse sites:create json: %w\nOutput was: %s", err, outStr)
+	}
+
 	if out.ID == "" {
-		return "", fmt.Errorf("site ID was empty in json output")
+		return "", fmt.Errorf("creation successful but no site id returned. output: %s", outStr)
 	}
 
 	return out.ID, nil
