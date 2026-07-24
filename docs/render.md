@@ -50,3 +50,4 @@ When you run a deployment, Atlas performs the following steps:
 3. **Triggers** a new deployment using the Render API, pinning the deployment to the exact Git commit SHA that you are currently on.
 4. **Polls** the Render API to monitor the deployment status in real-time.
 5. **Returns** the live URL of your service once the deployment succeeds (or reports a failure if the build crashes).
+6. **Health Check & Rollback**: Post-deployment, Atlas verifies the live URL returns an HTTP 200. If it fails, Atlas can seamlessly revert the service by re-deploying the exact Git Commit SHA of your `LastHealthyDeployment` using Render's deployment trigger API.

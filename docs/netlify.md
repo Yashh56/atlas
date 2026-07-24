@@ -54,3 +54,8 @@ Atlas auto-resolves your Netlify site for deployment:
 2. If none exists, Atlas will automatically create a new Netlify site for your workspace using `netlify sites:create`.
 3. If the workspace name is already taken, Atlas handles the collision by generating a unique suffix and retrying.
 4. Atlas saves the resolved Site ID in `.atlas/project.json` for future deployments.
+
+## Health Checks and Rollbacks
+Once deployed, Atlas runs an automated HTTP health check. If your site returns server errors or 404s for the homepage, Atlas can instantly restore the previous working deploy.
+
+This is powered directly by the Netlify REST API `restore` endpoint. Atlas securely tracks the `deploy_id` of your `LastHealthyDeployment` and can swap the live alias back to it instantly upon health check failure.

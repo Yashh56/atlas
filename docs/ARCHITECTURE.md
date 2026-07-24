@@ -70,7 +70,7 @@ Thin helpers (`LoadJSON`, `SaveJSON`) for reading and writing session context fi
 - `project.json` → `AnalyzeProject`
 - `build.json` → `RunBuildCommand`
 - `planner.json` → `orchestrator` (planner, not a tool)
-- `deployment.json` → `orchestrator` (deployment record)
+- `deployment.json` → `orchestrator` (deployment record, tracking `LastHealthyDeployment`)
 
 No tool writes to a context file it doesn't own.
 
@@ -94,9 +94,9 @@ Wraps [GoAI v0.8.6](https://github.com/zendev-sh/goai) to provide:
 Supported providers: `anthropic`, `openai`, `gemini`, `mistral`, `groq`, `grok`, `local` (OpenAI-compatible).
 
 ### `internal/deploy` — Deployment providers
-Implements `Provider` interface (`Name()`, `Deploy(ctx, input) (*Deployment, error)`). Currently only Vercel is implemented.
+Implements `Provider` interface (`Name()`, `Deploy(...)`, `HealthCheck(...)`, `Rollback(...)`). Supports providers like Vercel, Netlify, and Render.
 
-Also houses `EnsureVercelAuth`, the pre-flight auth check wired into the orchestrator. It checks credentials in priority order (env var → stored token → CLI delegation) before any build work starts, so a misconfigured credential fails fast rather than after a multi-minute build.
+Also houses `EnsureVercelAuth`, `EnsureRenderAuth`, and `EnsureNetlifyAuth`, the pre-flight auth checks wired into the orchestrator. It checks credentials in priority order (env var → stored token → CLI delegation) before any build work starts, so a misconfigured credential fails fast rather than after a multi-minute build.
 
 ### `internal/orchestrator` — Pipeline orchestration
 The central loop. Stages:
@@ -111,6 +111,8 @@ The central loop. Stages:
 9. Approval gate (manual or auto)
 10. Deploy
 11. Record deployment URL
+12. **Post-deploy HealthCheck**: Verify application health (`HTTP 200`)
+13. **Rollback**: If the health check fails, prompt to rollback to the `LastHealthyDeployment` (or automatically rollback if `--auto-rollback-on-unhealthy` is passed).
 
 On build exhaustion, the orchestrator reverts to the original git commit SHA captured in step 7.
 

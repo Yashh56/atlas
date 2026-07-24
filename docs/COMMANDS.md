@@ -22,6 +22,7 @@ atlas [path] [flags]
 | `--action <mode>` | Action mode: `build`, `test`, `deploy`, `test-and-deploy` (optional) |
 | `--provider <name>` | Deployment provider: `vercel`, `render`, `netlify`, `fly`, `railway` (optional) |
 | `--allow-dirty` | Skip the uncommitted-changes check and proceed anyway |
+| `--auto-rollback-on-unhealthy` | Automatically rollback without prompting if post-deploy health check fails |
 
 *Note: Running `atlas <path>` interactively without all required flags will launch a terminal wizard to guide you through selecting a model, picking an action, and (conditionally) setting credentials and choosing a provider.*
 
@@ -126,10 +127,10 @@ atlas models
 **Example output:**
 ```
 $ atlas models
-LLM PROVIDERS   (active: mistral — from config.json's llm_provider)
-  anthropic  ✓ stored
-  openai     ✗ OPENAI_API_KEY not set
-  gemini     ✗ GEMINI_API_KEY not set
+LLM MODELS   (active: mistral-large-latest — from config.json's default_model)
+  anthropic  ✓ stored (claude-3-5-sonnet-20240620)
+  openai     ✗ OPENAI_API_KEY not set (gpt-4o)
+  gemini     ✗ GEMINI_API_KEY not set (gemini-1.5-pro)
 ```
 
 **Subcommands:**

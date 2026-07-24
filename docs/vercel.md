@@ -41,3 +41,8 @@ When you run a deployment, Atlas will check for authentication in the following 
 
 ## Git Preconditions
 Unlike some other deployment platforms, Vercel deployments via Atlas use the Vercel CLI under the hood and **do not require your Git working tree to be clean or pushed to a remote repository**. You can freely deploy dirty working directories and unpushed commits.
+
+## Health Checks and Rollbacks
+Following a successful deployment, Atlas runs an HTTP Health Check against the new Vercel deployment URL. If the deployment is unhealthy (e.g., serving 500 errors):
+1. Atlas warns you and prompts to automatically rollback.
+2. If confirmed (or if `--auto-rollback-on-unhealthy` is set), Atlas uses the Vercel CLI (`vercel rollback <URL> --yes`) to instantly revert custom domains and routing to the last known healthy deployment.
