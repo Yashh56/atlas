@@ -17,6 +17,7 @@ type DeployInput struct {
 type Deployment struct {
 	URL        string
 	Provider   string
+	ProviderRef string // opaque reference used for rollback (e.g., deploy ID, commit SHA, or URL)
 	DeployedAt time.Time
 }
 
@@ -24,4 +25,6 @@ type Deployment struct {
 type Provider interface {
 	Name() string
 	Deploy(ctx context.Context, in DeployInput) (*Deployment, error)
+	HealthCheck(ctx context.Context, d *Deployment) error
+	Rollback(ctx context.Context, to *Deployment, in DeployInput) error
 }

@@ -175,7 +175,7 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 			switch statusResult.Status {
 			case "live":
 				fmt.Println() // Complete the line of dots
-				return r.fetchServiceURL(ctx, serviceID, token)
+				return r.fetchServiceURL(ctx, serviceID, token, commitSHA)
 			case "build_failed", "update_failed", "canceled", "deactivated":
 				fmt.Println() // Complete the line of dots
 				return nil, fmt.Errorf("render deploy: deploy failed with status %q", statusResult.Status)
@@ -187,7 +187,7 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 	}
 }
 
-func (r *RenderProvider) fetchServiceURL(ctx context.Context, serviceID, token string) (*deploy.Deployment, error) {
+func (r *RenderProvider) fetchServiceURL(ctx context.Context, serviceID, token, commitSHA string) (*deploy.Deployment, error) {
 	baseURL := r.BaseURL
 	if baseURL == "" {
 		baseURL = "https://api.render.com"
@@ -247,11 +247,140 @@ func (r *RenderProvider) fetchServiceURL(ctx context.Context, serviceID, token s
 		return nil, fmt.Errorf("render deploy: could not find URL in service details. Response was: %s", string(bodyBytes))
 	}
 
+
+
 	return &deploy.Deployment{
-		URL:        url,
-		Provider:   "render",
-		DeployedAt: time.Now().UTC(),
+		URL:         url,
+		Provider:    "render",
+		ProviderRef: commitSHA, // Guaranteed to be set by pre-deploy checks
+		DeployedAt:  time.Now().UTC(),
 	}, nil
+}
+
+func (r *RenderProvider) HealthCheck(ctx context.Context, d *deploy.Deployment) error {
+	return deploy.HTTPHealthCheck(ctx, d.URL, 200)
+}
+
+func (r *RenderProvider) Rollback(ctx context.Context, to *deploy.Deployment, in deploy.DeployInput) error {
+	var proj struct {
+		RenderServiceID *string `json:"render_service_id"`
+	}
+	_ = state.LoadJSON(in.SessionDir, "project.json", &proj)
+
+	serviceID := ""
+	if proj.RenderServiceID != nil {
+		serviceID = *proj.RenderServiceID
+	}
+	if serviceID == "" {
+		return fmt.Errorf("render rollback: no render_service_id found in project.json")
+	}
+
+	token := in.Token
+	if token == "" {
+		return fmt.Errorf("render rollback: unauthorized. No token provided")
+	}
+
+	if to.ProviderRef == "" {
+		return fmt.Errorf("render rollback: missing ProviderRef (commit_sha) on deployment")
+	}
+
+	payload := map[string]string{
+		"commitId": to.ProviderRef,
+		"clearCache": "do_not_clear",
+	}
+
+	bodyData, _ := json.Marshal(payload)
+
+	baseURL := r.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.render.com"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/v1/services/%s/deploys", baseURL, serviceID), bytes.NewReader(bodyData))
+	if err != nil {
+		return fmt.Errorf("render rollback: creating trigger request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("render rollback: triggering deploy: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("render rollback: trigger failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var triggerResult struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&triggerResult); err != nil {
+		return fmt.Errorf("render rollback: decoding trigger response: %w", err)
+	}
+
+	deployID := triggerResult.ID
+	if deployID == "" {
+		return fmt.Errorf("render rollback: no deploy ID returned")
+	}
+
+	// Poll for status
+	timeout := time.After(5 * time.Minute)
+	interval := r.TickInterval
+	if interval == 0 {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout:
+			return fmt.Errorf("render rollback: timed out after 5 minutes waiting for deploy %s", deployID)
+		case <-ticker.C:
+			statusReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/services/%s/deploys/%s", baseURL, serviceID, deployID), nil)
+			if err != nil {
+				return fmt.Errorf("render rollback: creating status request: %w", err)
+			}
+			statusReq.Header.Set("Authorization", "Bearer "+token)
+			statusReq.Header.Set("Accept", "application/json")
+
+			statusResp, err := http.DefaultClient.Do(statusReq)
+			if err != nil {
+				return fmt.Errorf("render rollback: checking status: %w", err)
+			}
+
+			if statusResp.StatusCode >= 400 {
+				statusResp.Body.Close()
+				return fmt.Errorf("render rollback: status check failed with %d", statusResp.StatusCode)
+			}
+
+			var statusResult struct {
+				Status string `json:"status"`
+			}
+			err = json.NewDecoder(statusResp.Body).Decode(&statusResult)
+			statusResp.Body.Close()
+			if err != nil {
+				return fmt.Errorf("render rollback: decoding status: %w", err)
+			}
+
+			switch statusResult.Status {
+			case "live":
+				fmt.Println() // visual formatting
+				return nil
+			case "build_failed", "update_failed", "canceled", "deactivated":
+				fmt.Println() // visual formatting
+				return fmt.Errorf("render rollback: deploy failed with status %q", statusResult.Status)
+			default:
+				fmt.Print(".") // visual feedback
+			}
+		}
+	}
 }
 
 func (r *RenderProvider) createService(ctx context.Context, token, remote, branch string, fw, pm *string, workspaceRoot string) (string, error) {

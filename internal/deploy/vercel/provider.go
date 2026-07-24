@@ -47,8 +47,35 @@ func (v *VercelProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 	return &deploy.Deployment{
 		URL:        url,
 		Provider:   "vercel",
+		ProviderRef: url,
 		DeployedAt: time.Now().UTC(),
 	}, nil
+}
+
+func (v *VercelProvider) HealthCheck(ctx context.Context, d *deploy.Deployment) error {
+	return deploy.HTTPHealthCheck(ctx, d.URL, 200)
+}
+
+func (v *VercelProvider) Rollback(ctx context.Context, to *deploy.Deployment, in deploy.DeployInput) error {
+	args := []string{"rollback", to.ProviderRef, "--yes"}
+	if in.Token != "" {
+		args = append(args, "--token", in.Token)
+	}
+
+	cmdTool := tools.RunCommand{
+		Command: "vercel",
+		Args:    args,
+		Dir:     in.WorkspaceRoot,
+	}
+	
+	res, err := cmdTool.Execute(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("vercel rollback execution failed: %w", err)
+	}
+	if !res.Success {
+		return fmt.Errorf("vercel rollback failed: %s", res.Error)
+	}
+	return nil
 }
 
 // parseVercelURL extracts the deployment URL from the stdout of the vercel CLI.
