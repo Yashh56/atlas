@@ -23,6 +23,7 @@ var (
 	deployProvider   string
 	deployAllowDirty bool
 	outputDirFlag    string
+	autoRollbackFlag bool
 )
 
 // validProviders is the exhaustive list of accepted --provider values.
@@ -56,6 +57,7 @@ func init() {
 	rootCmd.Flags().StringVar(&deployProvider, "provider", "", "deployment provider (vercel, render, netlify, fly, railway)")
 	rootCmd.Flags().BoolVar(&deployAllowDirty, "allow-dirty", false, "skip the dirty working-tree check and proceed even with uncommitted changes")
 	rootCmd.Flags().StringVar(&outputDirFlag, "output-dir", "", "manual output directory override (e.g. build, dist, out)")
+	rootCmd.Flags().BoolVar(&autoRollbackFlag, "auto-rollback-on-unhealthy", false, "automatically rollback without prompting if post-deploy health check fails")
 
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(testllmCmd)
@@ -175,6 +177,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		Action:        orchestrator.Action(deployAction),
 		IsInteractive: isInteractive,
 		OutputDir:     outputDirFlag,
+		AutoRollback:  autoRollbackFlag,
 	}
 	return orchestrator.Run(cmd.Context(), path, strings.ToLower(deployProvider), opts)
 }

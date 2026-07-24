@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"time"
 
+	"github.com/Yashh56/atlas/internal/deploy"
 	"github.com/Yashh56/atlas/internal/state"
 )
 
@@ -30,6 +31,7 @@ type DeploymentState struct {
 	RollbackAvailable     bool            `json:"rollback_available"`
 	Approval              ApprovalInfo    `json:"approval"`
 	HealthCheck           HealthCheckInfo `json:"health_check"`
+	LastHealthyDeployment *deploy.Deployment `json:"last_healthy_deployment"`
 }
 
 const deploymentFile = "deployment.json"

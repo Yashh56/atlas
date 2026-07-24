@@ -46,6 +46,7 @@ type RunOptions struct {
 	Action        Action
 	IsInteractive bool
 	OutputDir     string
+	AutoRollback  bool
 }
 
 // Run executes the full Atlas pipeline by dispatching to modular steps.
@@ -111,7 +112,7 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		}
 	}
 
-	return executeDeploy(ctx, ws, sessDir, planner, cfg, dep, provider, providerName)
+	return executeDeploy(ctx, ws, sessDir, planner, cfg, dep, provider, providerName, opts)
 }
 
 func ensureAtlasGitignore(wsRoot string) {
@@ -565,7 +566,7 @@ func executeTests(
 
 func executeDeploy(
 	ctx context.Context, ws *workspace.Workspace, sessDir string, planner *PlannerState,
-	cfg *config.Config, dep *DeploymentState, provider deploy.Provider, providerName string,
+	cfg *config.Config, dep *DeploymentState, provider deploy.Provider, providerName string, opts RunOptions,
 ) error {
 	approved := CheckApproval(cfg, dep, os.Stdin, os.Stdout)
 	if !approved {
@@ -586,12 +587,14 @@ func executeDeploy(
 		token = os.Getenv(strings.ToUpper(providerName) + "_TOKEN")
 	}
 
-	deployRes, err := provider.Deploy(ctx, deploy.DeployInput{
+	deployInput := deploy.DeployInput{
 		WorkspaceRoot: ws.Root,
 		SessionDir:    sessDir,
 		Environment:   dep.Environment,
 		Token:         token,
-	})
+	}
+
+	deployRes, err := provider.Deploy(ctx, deployInput)
 	if err != nil {
 		planner.Failed = append(planner.Failed, "deploy")
 		_ = SavePlanner(sessDir, planner)
@@ -601,10 +604,59 @@ func executeDeploy(
 	RecordDeployment(dep, deployRes.URL)
 	_ = SaveDeployment(sessDir, dep)
 
+	fmt.Printf("\n%s\n\n", cliutil.FormatBox(fmt.Sprintf("%s Deployed successfully to %s", cliutil.IconSuccess, cliutil.StyleHighlight.Render(deployRes.URL))))
+
+	fmt.Printf("%s Running post-deployment health check...\n", styleArrow)
+	healthErr := provider.HealthCheck(ctx, deployRes)
+	
+	if healthErr == nil {
+		fmt.Printf("%s Health check passed!\n", styleCheck)
+		dep.LastHealthyDeployment = deployRes
+		_ = SaveDeployment(sessDir, dep)
+	} else {
+		fmt.Printf("%s Health check failed: %v\n", styleCross, healthErr)
+		
+		if dep.LastHealthyDeployment == nil {
+			planner.Failed = append(planner.Failed, "deploy")
+			_ = SavePlanner(sessDir, planner)
+			return fmt.Errorf("health check failed and no prior healthy deployment exists to rollback to")
+		}
+
+		doRollback := opts.AutoRollback
+		if !doRollback && opts.IsInteractive {
+			// Prompt for rollback
+			fmt.Printf("\n%s A previous healthy deployment exists. Do you want to rollback to %s? [y/N]: ", styleWarn, dep.LastHealthyDeployment.URL)
+			var resp string
+			fmt.Scanln(&resp)
+			if strings.ToLower(strings.TrimSpace(resp)) == "y" {
+				doRollback = true
+			}
+		}
+
+		if doRollback {
+			fmt.Printf("%s Rolling back to previous healthy deployment...\n", styleArrow)
+			rbErr := provider.Rollback(ctx, dep.LastHealthyDeployment, deployInput)
+			if rbErr != nil {
+				return fmt.Errorf("rollback failed: %w", rbErr)
+			}
+			
+			fmt.Printf("%s Rollback executed. Verifying health...\n", styleArrow)
+			rbHealthErr := provider.HealthCheck(ctx, dep.LastHealthyDeployment)
+			if rbHealthErr != nil {
+				return fmt.Errorf("rolled back deployment failed health check: %w", rbHealthErr)
+			}
+			
+			fmt.Printf("%s Successfully rolled back to %s\n", styleCheck, dep.LastHealthyDeployment.URL)
+			
+			// Leave dep.LastHealthyDeployment as is, because it's still the last healthy one
+		} else {
+			return fmt.Errorf("deployment is unhealthy and rollback was declined")
+		}
+	}
+
 	planner.Completed = append(planner.Completed, "deploy")
 	planner.CurrentStep = "done"
 	_ = SavePlanner(sessDir, planner)
 
-	fmt.Printf("\n%s\n\n", cliutil.FormatBox(fmt.Sprintf("%s Deployed successfully to %s", cliutil.IconSuccess, cliutil.StyleHighlight.Render(deployRes.URL))))
 	return nil
 }
