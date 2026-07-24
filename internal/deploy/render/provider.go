@@ -36,11 +36,14 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 	}
 	_ = state.LoadJSON(in.SessionDir, "project.json", &proj)
 
-	token := os.Getenv("RENDER_TOKEN")
+	token := in.Token
 	if token == "" {
-		store, storeErr := credentials.Open()
-		if storeErr == nil && store != nil {
-			token, _ = store.GetSecret("render")
+		token = os.Getenv("RENDER_TOKEN")
+		if token == "" {
+			store, storeErr := credentials.Open()
+			if storeErr == nil && store != nil {
+				token, _ = store.GetSecret("render")
+			}
 		}
 	}
 	if token == "" {

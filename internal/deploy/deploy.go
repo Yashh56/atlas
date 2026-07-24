@@ -10,6 +10,7 @@ type DeployInput struct {
 	SessionDir    string // directory of the current session state
 	Environment   string // "production" for now
 	OutputDir     string // manual output dir override from CLI
+	Token         string // resolved provider token, if any
 }
 
 // Deployment holds the result of a successful deployment.

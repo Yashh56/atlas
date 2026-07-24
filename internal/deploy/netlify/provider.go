@@ -65,7 +65,7 @@ func (n *NetlifyProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*d
 	// Resolve the site ID
 	siteID := proj.NetlifySiteID
 	if siteID == "" {
-		newID, err := resolveNetlifySite(ctx, n.runner(), in.WorkspaceRoot)
+		newID, err := resolveNetlifySite(ctx, n.runner(), in.WorkspaceRoot, in.Token)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve netlify site: %w", err)
 		}
@@ -77,6 +77,9 @@ func (n *NetlifyProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*d
 	}
 
 	args := []string{"deploy", "--prod", "--site", siteID, "--json"}
+	if in.Token != "" {
+		args = append(args, "--auth", in.Token)
+	}
 	if outDir != "" {
 		args = append(args, "--dir", outDir)
 	}
@@ -105,10 +108,10 @@ func (n *NetlifyProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*d
 	}, nil
 }
 
-func resolveNetlifySite(ctx context.Context, runner deploy.CommandRunner, workspaceRoot string) (string, error) {
+func resolveNetlifySite(ctx context.Context, runner deploy.CommandRunner, workspaceRoot string, inToken string) (string, error) {
 	baseName := filepath.Base(workspaceRoot)
 	// try creating
-	id, err := createSite(ctx, runner, workspaceRoot, baseName)
+	id, err := createSite(ctx, runner, workspaceRoot, baseName, inToken)
 	if err == nil {
 		return id, nil
 	}
@@ -119,14 +122,18 @@ func resolveNetlifySite(ctx context.Context, runner deploy.CommandRunner, worksp
 		rand.Read(suffix)
 		newName := fmt.Sprintf("%s-%s", baseName, hex.EncodeToString(suffix))
 		
-		return createSite(ctx, runner, workspaceRoot, newName)
+		return createSite(ctx, runner, workspaceRoot, newName, inToken)
 	}
 	
 	return "", err
 }
 
-func createSite(ctx context.Context, runner deploy.CommandRunner, workspaceRoot string, name string) (string, error) {
-	outStr, err := runner.Run(ctx, workspaceRoot, "netlify", "sites:create", "--name", name, "--json")
+func createSite(ctx context.Context, runner deploy.CommandRunner, workspaceRoot string, name string, token string) (string, error) {
+	args := []string{"sites:create", "--name", name, "--json"}
+	if token != "" {
+		args = append(args, "--auth", token)
+	}
+	outStr, err := runner.Run(ctx, workspaceRoot, "netlify", args...)
 	if err != nil {
 		return "", fmt.Errorf("creation failed: %w (output: %s)", err, outStr)
 	}

@@ -3,7 +3,6 @@ package vercel
 import (
 	"context"
 	"fmt"
-	"os"
 	"regexp"
 	"time"
 
@@ -17,16 +16,17 @@ type VercelProvider struct{}
 func (v *VercelProvider) Name() string { return "vercel" }
 
 func (v *VercelProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*deploy.Deployment, error) {
-	token := os.Getenv("VERCEL_TOKEN")
-	if token == "" {
-		return nil, fmt.Errorf("VERCEL_TOKEN not set — see docs for how to generate one")
+	// If a token is provided in the input, we use it. Otherwise, we rely on the Vercel CLI's internal session.
+	args := []string{"deploy", "--prod", "--yes", "--cwd", in.WorkspaceRoot}
+	if in.Token != "" {
+		args = append(args, "--token", in.Token)
 	}
 
 	// We reuse tools.RunCommand to execute the CLI.
 	// We don't need a session here since we just want to run a simple command and get output.
 	cmdTool := tools.RunCommand{
 		Command: "vercel",
-		Args:    []string{"deploy", "--prod", "--yes", "--token", token, "--cwd", in.WorkspaceRoot},
+		Args:    args,
 		Dir:     in.WorkspaceRoot,
 	}
 
