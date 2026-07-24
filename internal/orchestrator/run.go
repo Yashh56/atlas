@@ -19,14 +19,14 @@ import (
 	"github.com/Yashh56/atlas/internal/state"
 	"github.com/Yashh56/atlas/internal/tools"
 	"github.com/Yashh56/atlas/internal/workspace"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/Yashh56/atlas/internal/cliutil"
 )
 
 var (
-	styleCheck = lipgloss.NewStyle().Foreground(lipgloss.Color("46")).Bold(true).Render("✓")
-	styleArrow = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true).Render("→")
-	styleCross = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true).Render("✗")
-	styleWarn  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("⚠")
+	styleCheck = cliutil.IconSuccess
+	styleArrow = cliutil.IconArrow
+	styleCross = cliutil.IconError
+	styleWarn  = cliutil.IconWarning
 )
 
 // Action defines the sequence of operations for the pipeline.
@@ -139,7 +139,7 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		err = fmt.Errorf("orchestrator: loading config: %w", err)
 		return
 	}
-	fmt.Printf("%s Config loaded\n", styleCheck)
+	fmt.Printf("%s\n", cliutil.FormatSuccess("Config", "loaded"))
 
 	ws, err = workspace.Resolve(workspacePath)
 	if err != nil {
@@ -150,7 +150,7 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		err = fmt.Errorf("orchestrator: workspace path %q does not exist", workspacePath)
 		return
 	}
-	fmt.Printf("%s Workspace resolved\n\n", styleCheck)
+	fmt.Printf("%s\n\n", cliutil.FormatSuccess("Workspace", "resolved"))
 
 	store, storeErr := credentials.Open()
 	if storeErr != nil {
@@ -220,7 +220,7 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 
 
 
-	fmt.Printf("%s Session created (%s)\n\n", styleCheck, sess.ID)
+	fmt.Printf("%s\n\n", cliutil.FormatSuccess("Session", sess.ID))
 	return
 }
 
@@ -230,25 +230,37 @@ func executeAnalyzeAndValidate(
 ) (*string, string, string, bool, error) {
 
 	planner.CurrentStep = "analyze_project"
+	
+	spinner := cliutil.StartSpinner("Analyzing project...")
+	
 	analyzeTool := tools.AnalyzeProject{WorkspaceRoot: ws.Root, SessionDir: sessDir}
 	analyzeResult, err := analyzeTool.Execute(ctx, sess)
+	
+	spinner.Stop()
+	
 	if err != nil {
 		return nil, "", "", false, fmt.Errorf("orchestrator: analyze_project: %w", err)
 	}
 	if analyzeResult.Success {
-		fmt.Printf("%s Project analyzed → %s\n\n", styleCheck, analyzeResult.Output)
+		fmt.Printf("%s\n", cliutil.FormatSuccess("Analysis", analyzeResult.Output))
 		planner.Completed = append(planner.Completed, "analyze_project")
 	}
 
 	planner.CurrentStep = "git_validate"
+	
+	spinner = cliutil.StartSpinner("Validating git repository...")
+	
 	gitVal := tools.GitValidate{WorkspaceRoot: ws.Root, GitRoot: ws.GitRoot, SessionDir: sessDir, Provider: providerName}
 	gitResult, err := gitVal.Execute(ctx, sess)
+	
+	spinner.Stop()
+	
 	if err != nil {
 		return nil, "", "", false, fmt.Errorf("orchestrator: git_validate: %w", err)
 	}
 
 	if gitResult.Success && gitResult.Output != "no_git_repo" {
-		fmt.Printf("%s Git validated → %s\n\n", styleCheck, gitResult.Output)
+		fmt.Printf("%s\n\n", cliutil.FormatSuccess("Git", gitResult.Output))
 		planner.Completed = append(planner.Completed, "git_validate")
 
 		if gitResult.Output == "is_clean:false" && !opts.AllowDirty {
@@ -346,6 +358,8 @@ func executeBuildLoop(
 		planner.CurrentStep = "run_build_command"
 		_ = SavePlanner(sessDir, planner)
 
+		spinner := cliutil.StartSpinner("Running build command...")
+
 		buildTool := tools.RunBuildCommand{
 			WorkspaceRoot:  ws.Root,
 			Framework:      framework,
@@ -353,6 +367,9 @@ func executeBuildLoop(
 			SessionDir:     sessDir,
 		}
 		buildResult, err := buildTool.Execute(ctx, sess)
+		
+		spinner.Stop()
+		
 		if err != nil {
 			return fmt.Errorf("orchestrator: run_build_command: %w", err)
 		}
@@ -373,7 +390,17 @@ func executeBuildLoop(
 
 			retry := planner.Retries["fix_and_rebuild"]
 			if retry.Count > 0 {
-				fmt.Printf("%s Build succeeded after %d fix attempt(s) (%.1fs)\n\n", styleCheck, retry.Count, durationSec)
+				fmt.Printf("%s Build succeeded after %d fix attempt(s) (%.1fs)\n\n", cliutil.IconSuccess, retry.Count, durationSec)
+				
+				// Show colorized diff of what was fixed
+				diffCmd := tools.RunCommand{
+					Command: "git",
+					Args:    []string{"diff", "--color=always"},
+					Dir:     ws.Root,
+				}
+				if diffRes, err := diffCmd.Execute(ctx, sess); err == nil && diffRes.Output != "" {
+					fmt.Println(diffRes.Output)
+				}
 				
 				if CheckCommitApproval(os.Stdin, os.Stdout) {
 					// Commit the changes
@@ -550,10 +577,20 @@ func executeDeploy(
 	planner.CurrentStep = "deploy"
 	_ = SavePlanner(sessDir, planner)
 
+	store, _ := credentials.Open()
+	var token string
+	if store != nil {
+		token, _ = store.GetSecret(providerName)
+	}
+	if token == "" {
+		token = os.Getenv(strings.ToUpper(providerName) + "_TOKEN")
+	}
+
 	deployRes, err := provider.Deploy(ctx, deploy.DeployInput{
 		WorkspaceRoot: ws.Root,
 		SessionDir:    sessDir,
 		Environment:   dep.Environment,
+		Token:         token,
 	})
 	if err != nil {
 		planner.Failed = append(planner.Failed, "deploy")
@@ -568,6 +605,6 @@ func executeDeploy(
 	planner.CurrentStep = "done"
 	_ = SavePlanner(sessDir, planner)
 
-	fmt.Printf("\n%s Deployed successfully to %s\n\n", styleCheck, deployRes.URL)
+	fmt.Printf("\n%s\n\n", cliutil.FormatBox(fmt.Sprintf("%s Deployed successfully to %s", cliutil.IconSuccess, cliutil.StyleHighlight.Render(deployRes.URL))))
 	return nil
 }
