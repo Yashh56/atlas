@@ -36,7 +36,7 @@ func EnsureRenderAuthFull(
 	}
 
 	if token == "" {
-		fmt.Fprintln(stdout, "→ Checking Render authentication...")
+		fmt.Fprintf(stdout, "%s Checking Render authentication...\n", cliutil.IconArrow)
 		fmt.Fprintln(stdout, "  Not logged in to Render. Need a personal API key.")
 
 		if stdin == os.Stdin {

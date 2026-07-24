@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Yashh56/atlas/internal/credentials"
+	"github.com/Yashh56/atlas/internal/cliutil"
 )
 
 // EnsureProviderAuth checks for authentication via environment variable or stored token.
@@ -25,7 +26,7 @@ func EnsureProviderAuth(
 
 	// 1. Check env var first.
 	if envVal := os.Getenv(envVar); envVal != "" {
-		fmt.Fprintf(stdout, "✓ %s authenticated (env_var, %s)\n", titleName, envVar)
+		fmt.Fprintf(stdout, "%s %s authenticated (env_var, %s)\n", cliutil.IconSuccess, titleName, envVar)
 		return envVal, nil
 	}
 
@@ -39,7 +40,7 @@ func EnsureProviderAuth(
 					if account == "" {
 						account = "unknown"
 					}
-					fmt.Fprintf(stdout, "✓ %s authenticated (stored_token, %s)\n", titleName, account)
+					fmt.Fprintf(stdout, "%s %s authenticated (stored_token, %s)\n", cliutil.IconSuccess, titleName, account)
 					return token, nil
 				}
 			}
@@ -138,13 +139,13 @@ func EnsureCLIAuthFull(
 	if store != nil {
 		if meta, ok, err := store.GetMeta(opts.ProviderName); err == nil && ok {
 			if meta.Method == credentials.MethodCLISession {
-				fmt.Fprintf(stdout, "✓ %s authenticated (cli_session, %s)\n", titleName, meta.Account)
+				fmt.Fprintf(stdout, "%s %s authenticated (cli_session, %s)\n", cliutil.IconSuccess, titleName, meta.Account)
 				return nil
 			}
 		}
 	}
 
-	fmt.Fprintf(stdout, "→ Checking %s authentication...\n", titleName)
+	fmt.Fprintf(stdout, "%s Checking %s authentication...\n", cliutil.IconArrow, titleName)
 
 	// Run whoami to check if already logged in.
 	accountRaw, whoamiErr := runner.Run(ctx, "", opts.CLIName, opts.WhoamiCommand...)
@@ -159,7 +160,7 @@ func EnsureCLIAuthFull(
 				Account:    account,
 			})
 		}
-		fmt.Fprintf(stdout, "✓ %s authenticated (cli_session, %s)\n", titleName, account)
+		fmt.Fprintf(stdout, "%s %s authenticated (cli_session, %s)\n", cliutil.IconSuccess, titleName, account)
 		return nil
 	}
 
@@ -185,6 +186,6 @@ func EnsureCLIAuthFull(
 			Account:    account,
 		})
 	}
-	fmt.Fprintf(stdout, "✓ %s authenticated (cli_session, %s)\n", titleName, account)
+	fmt.Fprintf(stdout, "%s %s authenticated (cli_session, %s)\n", cliutil.IconSuccess, titleName, account)
 	return nil
 }
