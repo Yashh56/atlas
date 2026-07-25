@@ -56,7 +56,11 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		return err
 	}
 
-	planner := NewPlanner("deploy")
+	goal := string(opts.Action)
+	if goal == "" {
+		goal = string(ActionDeploy)
+	}
+	planner := NewPlanner(goal)
 	_ = SavePlanner(sessDir, planner)
 
 	var didStash bool
