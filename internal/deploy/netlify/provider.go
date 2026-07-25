@@ -83,7 +83,14 @@ func (n *NetlifyProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*d
 		args = append(args, "--auth", in.Token)
 	}
 	if outDir != "" {
-		if _, err := os.Stat(filepath.Join(in.WorkspaceRoot, outDir)); err == nil {
+		// For Next.js projects where publish dir defaults to "out", only pass --dir if "out" actually exists
+		// (e.g. static export). Otherwise let Netlify CLI handle standard Next.js (.next + serverless plugins).
+		shouldAdd := true
+		if outDir == "out" {
+			_, err := os.Stat(filepath.Join(in.WorkspaceRoot, outDir))
+			shouldAdd = err == nil
+		}
+		if shouldAdd {
 			args = append(args, "--dir", outDir)
 		}
 	}

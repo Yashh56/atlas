@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Yashh56/atlas/internal/cliutil"
 	"github.com/Yashh56/atlas/internal/config"
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/deploy"
@@ -19,7 +20,6 @@ import (
 	"github.com/Yashh56/atlas/internal/state"
 	"github.com/Yashh56/atlas/internal/tools"
 	"github.com/Yashh56/atlas/internal/workspace"
-	"github.com/Yashh56/atlas/internal/cliutil"
 )
 
 var (
@@ -38,6 +38,11 @@ const (
 	ActionDeploy        Action = "deploy"          // ...→ build → fix loop → deploy (today's default)
 	ActionTestAndDeploy Action = "test-and-deploy" // ...→ build → fix loop → run tests → deploy
 )
+
+// IsDeploy returns true if the pipeline action involves deployment.
+func (a Action) IsDeploy() bool {
+	return a == ActionDeploy || a == ActionTestAndDeploy || a == "" // default is deploy
+}
 
 // RunOptions carries per-invocation flags from the CLI into the pipeline.
 type RunOptions struct {
@@ -171,7 +176,7 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		return
 	}
 
-	if providerName != "" {
+	if providerName != "" && opts.Action.IsDeploy() {
 		registry := deploy.NewRegistry()
 		registry.Register(&vercel.VercelProvider{})
 		registry.Register(&render.RenderProvider{})
@@ -184,19 +189,20 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 			return
 		}
 
-		if providerName == "vercel" {
+		switch providerName {
+		case "vercel":
 			fmt.Printf("%s Checking Vercel authentication...\n", styleArrow)
 			if authErr := vercel.EnsureVercelAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
 				err = fmt.Errorf("Vercel auth failed: %w", authErr)
 				return
 			}
-		} else if providerName == "render" {
+		case "render":
 			fmt.Printf("%s Checking Render authentication...\n", styleArrow)
 			if authErr := render.EnsureRenderAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
 				err = fmt.Errorf("Render auth failed: %w", authErr)
 				return
 			}
-		} else if providerName == "netlify" {
+		case "netlify":
 			fmt.Printf("%s Checking Netlify authentication...\n", styleArrow)
 			if authErr := netlify.EnsureNetlifyAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
 				err = fmt.Errorf("Netlify auth failed: %w", authErr)
@@ -214,16 +220,16 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 
 	sessDir = session.SessionDir(sessionsDir, sess.ID)
 
-	dep = NewDeployment(providerName)
-	_ = SaveDeployment(sessDir, dep)
+	if opts.Action.IsDeploy() {
+		dep = NewDeployment(providerName)
+		_ = SaveDeployment(sessDir, dep)
+	}
 
 	var proj ProjectState
 	if p, err := LoadProject(filepath.Join(ws.Root, ".atlas")); err == nil {
 		proj = *p
 	}
 	_ = SaveProject(sessDir, &proj)
-
-
 
 	fmt.Printf("%s\n\n", cliutil.FormatSuccess("Session", sess.ID))
 	return
@@ -235,14 +241,14 @@ func executeAnalyzeAndValidate(
 ) (*string, string, string, bool, error) {
 
 	planner.CurrentStep = "analyze_project"
-	
+
 	spinner := cliutil.StartSpinner("Analyzing project...")
-	
+
 	analyzeTool := tools.AnalyzeProject{WorkspaceRoot: ws.Root, SessionDir: sessDir}
 	analyzeResult, err := analyzeTool.Execute(ctx, sess)
-	
+
 	spinner.Stop()
-	
+
 	if err != nil {
 		return nil, "", "", false, fmt.Errorf("orchestrator: analyze_project: %w", err)
 	}
@@ -252,14 +258,14 @@ func executeAnalyzeAndValidate(
 	}
 
 	planner.CurrentStep = "git_validate"
-	
+
 	spinner = cliutil.StartSpinner("Validating git repository...")
-	
+
 	gitVal := tools.GitValidate{WorkspaceRoot: ws.Root, GitRoot: ws.GitRoot, SessionDir: sessDir, Provider: providerName}
 	gitResult, err := gitVal.Execute(ctx, sess)
-	
+
 	spinner.Stop()
-	
+
 	if err != nil {
 		return nil, "", "", false, fmt.Errorf("orchestrator: git_validate: %w", err)
 	}
@@ -269,12 +275,12 @@ func executeAnalyzeAndValidate(
 		planner.Completed = append(planner.Completed, "git_validate")
 
 		if gitResult.Output == "is_clean:false" && !opts.AllowDirty {
-			if opts.Action == ActionDeploy || opts.Action == ActionTestAndDeploy {
+			if opts.Action.IsDeploy() {
 				if !opts.IsInteractive {
 					_ = SavePlanner(sessDir, planner)
 					return nil, "", "", false, fmt.Errorf("Working tree has uncommitted changes. Commit or stash them, or re-run with --allow-dirty")
 				}
-				
+
 				choice := PromptDirtyDeploy(providerName, os.Stdin, os.Stdout)
 				switch choice {
 				case 1:
@@ -285,7 +291,7 @@ func executeAnalyzeAndValidate(
 						Dir:     ws.Root,
 					}
 					commitCmd.Execute(ctx, sess)
-					
+
 					fmt.Printf("%s Pushing fixes to remote...\n", styleArrow)
 					pushCmd := tools.RunCommand{
 						Command: "git",
@@ -297,7 +303,7 @@ func executeAnalyzeAndValidate(
 						return nil, "", "", false, fmt.Errorf("failed to push changes to remote: %s", pushRes.Error)
 					}
 					fmt.Printf("%s Fixes committed and pushed successfully!\n\n", styleCheck)
-					
+
 					// Re-validate to get the new commit SHA
 					gitVal.Execute(ctx, sess)
 				case 2:
@@ -309,7 +315,7 @@ func executeAnalyzeAndValidate(
 							Dir:     ws.Root,
 						}
 						stashCmd.Execute(ctx, sess)
-						
+
 						// Load project state so we return the framework/package manager
 						var commitSHA *string
 						proj, _ := LoadProject(sessDir)
@@ -324,7 +330,7 @@ func executeAnalyzeAndValidate(
 						if proj != nil && proj.PackageManager != nil {
 							packageManager = *proj.PackageManager
 						}
-						
+
 						return commitSHA, framework, packageManager, true, nil
 					}
 				case 3:
@@ -372,9 +378,9 @@ func executeBuildLoop(
 			SessionDir:     sessDir,
 		}
 		buildResult, err := buildTool.Execute(ctx, sess)
-		
+
 		spinner.Stop()
-		
+
 		if err != nil {
 			return fmt.Errorf("orchestrator: run_build_command: %w", err)
 		}
@@ -396,7 +402,7 @@ func executeBuildLoop(
 			retry := planner.Retries["fix_and_rebuild"]
 			if retry.Count > 0 {
 				fmt.Printf("%s Build succeeded after %d fix attempt(s) (%.1fs)\n\n", cliutil.IconSuccess, retry.Count, durationSec)
-				
+
 				// Show colorized diff of what was fixed
 				diffCmd := tools.RunCommand{
 					Command: "git",
@@ -406,7 +412,7 @@ func executeBuildLoop(
 				if diffRes, err := diffCmd.Execute(ctx, sess); err == nil && diffRes.Output != "" {
 					fmt.Println(diffRes.Output)
 				}
-				
+
 				if CheckCommitApproval(os.Stdin, os.Stdout) {
 					// Commit the changes
 					fmt.Printf("%s Committing fixes...\n", styleArrow)
@@ -416,7 +422,7 @@ func executeBuildLoop(
 						Dir:     ws.Root,
 					}
 					commitCmd.Execute(ctx, sess)
-					
+
 					// Push the changes
 					fmt.Printf("%s Pushing fixes to remote...\n", styleArrow)
 					pushCmd := tools.RunCommand{
@@ -426,7 +432,7 @@ func executeBuildLoop(
 					}
 					pushCmd.Execute(ctx, sess)
 					fmt.Printf("%s Fixes committed and pushed successfully!\n\n", styleCheck)
-					
+
 					// Re-run git validation to update project.json with the NEW commit SHA
 					// so that the deploy provider deploys the fixed code instead of the old broken commit.
 					gitVal := tools.GitValidate{
@@ -474,7 +480,7 @@ func executeBuildLoop(
 
 		if retry.Count > retry.Max {
 			fmt.Printf("%s Exhausted retries. Escalating and reverting changes...\n", styleArrow)
-			
+
 			// Restore from backups instead of git checkout
 			backupDir := filepath.Join(sessDir, "backups")
 			if _, err := os.Stat(backupDir); err == nil {
@@ -612,14 +618,14 @@ func executeDeploy(
 
 	fmt.Printf("%s Running post-deployment health check...\n", styleArrow)
 	healthErr := provider.HealthCheck(ctx, deployRes)
-	
+
 	if healthErr == nil {
 		fmt.Printf("%s Health check passed!\n", styleCheck)
 		dep.LastHealthyDeployment = deployRes
 		_ = SaveDeployment(sessDir, dep)
 	} else {
 		fmt.Printf("%s Health check failed: %v\n", styleCross, healthErr)
-		
+
 		if dep.LastHealthyDeployment == nil {
 			planner.Failed = append(planner.Failed, "deploy")
 			_ = SavePlanner(sessDir, planner)
@@ -643,15 +649,15 @@ func executeDeploy(
 			if rbErr != nil {
 				return fmt.Errorf("rollback failed: %w", rbErr)
 			}
-			
+
 			fmt.Printf("%s Rollback executed. Verifying health...\n", styleArrow)
 			rbHealthErr := provider.HealthCheck(ctx, dep.LastHealthyDeployment)
 			if rbHealthErr != nil {
 				return fmt.Errorf("rolled back deployment failed health check: %w", rbHealthErr)
 			}
-			
+
 			fmt.Printf("%s Successfully rolled back to %s\n", styleCheck, dep.LastHealthyDeployment.URL)
-			
+
 			// Leave dep.LastHealthyDeployment as is, because it's still the last healthy one
 		} else {
 			return fmt.Errorf("deployment is unhealthy and rollback was declined")

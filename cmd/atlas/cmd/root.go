@@ -95,7 +95,7 @@ func init() {
 }
 
 func actionNeedsProvider(a orchestrator.Action) bool {
-	return a == orchestrator.ActionDeploy || a == orchestrator.ActionTestAndDeploy
+	return a.IsDeploy()
 }
 
 func runPipeline(cmd *cobra.Command, args []string) error {

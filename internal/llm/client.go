@@ -107,7 +107,7 @@ func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 		return mistral.Chat(modelName), nil
 	}
 
-	if strings.HasPrefix(modelName, "llama3-") || strings.HasPrefix(modelName, "mixtral-") {
+	if (strings.HasPrefix(modelName, "llama-") || strings.HasPrefix(modelName, "llama3-") || strings.HasPrefix(modelName, "mixtral-")) && cfg.LLMProvider != "local" && modelName != "llama3" {
 		key, err := resolveAPIKey(store, "groq", "GROQ_API_KEY")
 		if err != nil { return nil, err }
 		os.Setenv("GROQ_API_KEY", key)
@@ -121,8 +121,11 @@ func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 		return xai.Chat(modelName), nil
 	}
 
-	// Fallback to local
-	return compat.Chat(modelName, compat.WithBaseURL(cfg.LocalLLMBaseURL)), nil
+	if cfg.LLMProvider == "local" || modelName == "llama3" || strings.HasPrefix(modelName, "local") {
+		return compat.Chat(modelName, compat.WithBaseURL(cfg.LocalLLMBaseURL)), nil
+	}
+
+	return nil, fmt.Errorf("unknown LLM provider or model: %q", cfg.LLMProvider)
 }
 
 // Client covers plain-text completion — used anywhere structured output isn't needed.
