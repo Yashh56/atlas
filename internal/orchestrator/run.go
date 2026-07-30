@@ -271,7 +271,23 @@ func executeAnalyzeAndValidate(
 	}
 
 	if gitResult.Success && gitResult.Output != "no_git_repo" {
-		fmt.Printf("%s\n\n", cliutil.FormatSuccess("Git", gitResult.Output))
+		fmt.Printf("%s\n", cliutil.FormatSuccess("Git", gitResult.Output))
+		if proj, err := LoadProject(sessDir); err == nil && proj != nil {
+			if proj.Git.Branch != nil && *proj.Git.Branch != "" {
+				fmt.Printf("%s\n", cliutil.FormatSuccess("Branch", *proj.Git.Branch))
+			}
+			if proj.Git.CommitSHA != nil && *proj.Git.CommitSHA != "" {
+				sha := *proj.Git.CommitSHA
+				if len(sha) > 7 {
+					sha = sha[:7]
+				}
+				fmt.Printf("%s\n", cliutil.FormatSuccess("Commit", sha))
+			}
+			if proj.Git.Remote != nil && *proj.Git.Remote != "" {
+				fmt.Printf("%s\n", cliutil.FormatSuccess("Remote", *proj.Git.Remote))
+			}
+		}
+		fmt.Println()
 		planner.Completed = append(planner.Completed, "git_validate")
 
 		if gitResult.Output == "is_clean:false" && !opts.AllowDirty {
@@ -302,10 +318,19 @@ func executeAnalyzeAndValidate(
 					if pushErr != nil || !pushRes.Success {
 						return nil, "", "", false, fmt.Errorf("failed to push changes to remote: %s", pushRes.Error)
 					}
-					fmt.Printf("%s Fixes committed and pushed successfully!\n\n", styleCheck)
+					fmt.Printf("%s Fixes committed and pushed successfully!\n", styleCheck)
 
 					// Re-validate to get the new commit SHA
 					gitVal.Execute(ctx, sess)
+					if proj, err := LoadProject(sessDir); err == nil && proj != nil && proj.Git.CommitSHA != nil && *proj.Git.CommitSHA != "" {
+						sha := *proj.Git.CommitSHA
+						if len(sha) > 7 {
+							sha = sha[:7]
+						}
+						fmt.Printf("%s\n\n", cliutil.FormatSuccess("New Commit", sha))
+					} else {
+						fmt.Println()
+					}
 				case 2:
 					if strings.ToLower(providerName) != "vercel" {
 						fmt.Printf("%s Stashing uncommitted changes...\n", styleArrow)

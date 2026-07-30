@@ -149,24 +149,24 @@ func (g GitValidate) Execute(ctx context.Context, s *session.Session) (ToolResul
 				Duration: time.Since(start),
 			}, nil
 		}
-		
+
 		if gb.CommitSHA != nil && gb.Branch != nil {
 			remoteRef := "origin/" + *gb.Branch
-		if remoteSHA, ok := run("rev-parse", remoteRef); ok && remoteSHA != "" {
-			if *gb.CommitSHA != remoteSHA {
+			if remoteSHA, ok := run("rev-parse", remoteRef); ok && remoteSHA != "" {
+				if *gb.CommitSHA != remoteSHA {
+					return ToolResult{
+						Success:  false,
+						Error:    fmt.Sprintf("Local commit %s hasn't been pushed — Render deploys from the remote branch, not local disk. Push your changes first.", (*gb.CommitSHA)[:7]),
+						Duration: time.Since(start),
+					}, nil
+				}
+			} else {
 				return ToolResult{
 					Success:  false,
 					Error:    fmt.Sprintf("Local commit %s hasn't been pushed — Render deploys from the remote branch, not local disk. Push your changes first.", (*gb.CommitSHA)[:7]),
 					Duration: time.Since(start),
 				}, nil
 			}
-		} else {
-			return ToolResult{
-				Success:  false,
-				Error:    fmt.Sprintf("Local commit %s hasn't been pushed — Render deploys from the remote branch, not local disk. Push your changes first.", (*gb.CommitSHA)[:7]),
-				Duration: time.Since(start),
-			}, nil
-		}
 		}
 	}
 
