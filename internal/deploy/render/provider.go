@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Yashh56/atlas/internal/build"
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/deploy"
 	"github.com/Yashh56/atlas/internal/state"
@@ -426,59 +427,58 @@ func (r *RenderProvider) createService(ctx context.Context, token, remote, branc
 	// Determine service details based on heuristics
 	serviceType := "web_service"
 	buildCommand := "npm install && npm run build"
-	publishPath := ""
 	startCommand := "npm start"
+	publishPath := ""
 
-	if pm != nil && *pm != "npm" {
-		buildCommand = fmt.Sprintf("%s install && %s run build", *pm, *pm)
-		startCommand = fmt.Sprintf("%s start", *pm)
+	packageManager := "npm"
+	if pm != nil && *pm != "" {
+		packageManager = *pm
 	}
 
+	framework := ""
 	if fw != nil {
-		switch *fw {
-		case "react", "vue":
-			serviceType = "static_site"
-			publishPath = "dist" // common default
-			if *fw == "react" {
-				publishPath = "build" // CRA default
-				if _, err := os.Stat(filepath.Join(workspaceRoot, "vite.config.js")); err == nil {
-					publishPath = "dist"
-				} else if _, err := os.Stat(filepath.Join(workspaceRoot, "vite.config.ts")); err == nil {
-					publishPath = "dist"
-				}
-			}
-		case "nextjs":
-			serviceType = "web_service"
-			startCommand = fmt.Sprintf("%s run start", *pm)
-		case "express", "node":
-			serviceType = "web_service"
-			
-			// Check if package.json has a build script
-			hasBuildScript := false
-			pkgPath := filepath.Join(workspaceRoot, "package.json")
-			if data, err := os.ReadFile(pkgPath); err == nil {
-				var pkg struct {
-					Scripts map[string]string `json:"scripts"`
-				}
-				if err := json.Unmarshal(data, &pkg); err == nil {
-					if pkg.Scripts["build"] != "" {
-						hasBuildScript = true
-					}
-				}
-			}
-			
-			if hasBuildScript {
-				buildCommand = fmt.Sprintf("%s install && %s run build", *pm, *pm)
-			} else {
-				buildCommand = fmt.Sprintf("%s install", *pm)
-			}
-			
-			startCommand = "node index.js"
-		case "go":
-			serviceType = "web_service"
-			buildCommand = "go build -o app"
-			startCommand = "./app"
+		framework = *fw
+	}
+
+	// Determine service type and publish path
+	switch framework {
+	case "react", "vue":
+		serviceType = "static_site"
+		if p, err := build.ResolvePublishDir(framework, packageManager, workspaceRoot); err == nil {
+			publishPath = p
+		} else {
+			publishPath = "dist"
 		}
+	case "nextjs", "express", "node", "go":
+		serviceType = "web_service"
+	}
+
+	// Resolve build command using the shared table
+	cmd, args, _ := build.ResolveBuildCommand(framework, packageManager)
+	if cmd != "" {
+		// Render needs a single shell string
+		buildStr := cmd
+		for _, arg := range args {
+			buildStr += " " + arg
+		}
+		
+		if cmd == "go" {
+			buildCommand = "go build -o app"
+		} else {
+			// Prepend the install command for JS/TS
+			buildCommand = fmt.Sprintf("%s install && %s", packageManager, buildStr)
+		}
+	}
+
+	// Resolve start command
+	if framework == "go" {
+		startCommand = "./app"
+	} else if framework == "nextjs" {
+		startCommand = fmt.Sprintf("%s run start", packageManager)
+	} else if framework == "express" || framework == "node" {
+		startCommand = "node index.js"
+	} else {
+		startCommand = fmt.Sprintf("%s start", packageManager)
 	}
 
 	repoName := filepath.Base(remote)
