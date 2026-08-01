@@ -33,7 +33,9 @@ atlas/
 │   ├── orchestrator/  Pipeline orchestration (the main loop)
 │   ├── registry/      Provider registry
 │   ├── healthcheck/   HTTP health check helpers
-│   └── audit/         Audit logging
+│   ├── audit/         Audit logging
+│   ├── cliutil/       UI styling and terminal helpers
+│   └── version/       Global versioning and build information
 │
 ├── skills/
 │   └── fix_build.md   System prompt for the fix-code LLM call
@@ -69,6 +71,7 @@ Thin helpers (`LoadJSON`, `SaveJSON`) for reading and writing session context fi
 **Context file ownership rule**: each context file is owned by exactly one tool:
 - `project.json` → `AnalyzeProject`
 - `build.json` → `RunBuildCommand`
+- `test.json` → `RunTests`
 - `planner.json` → `orchestrator` (planner, not a tool)
 - `deployment.json` → `orchestrator` (deployment record, tracking `LastHealthyDeployment`)
 

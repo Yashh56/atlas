@@ -21,6 +21,7 @@ atlas [path] [flags]
 | `--model <name>` | LLM provider to use (e.g., `anthropic`, `openai`) (optional) |
 | `--action <mode>` | Action mode: `build`, `test`, `deploy`, `test-and-deploy` (optional) |
 | `--provider <name>` | Deployment provider: `vercel`, `render`, `netlify`, `fly`, `railway` (optional) |
+| `--output-dir <path>` | Manually specify the static output directory for deployment (optional) |
 | `--allow-dirty` | Skip the uncommitted-changes check and proceed anyway |
 | `--auto-rollback-on-unhealthy` | Automatically rollback without prompting if post-deploy health check fails |
 
