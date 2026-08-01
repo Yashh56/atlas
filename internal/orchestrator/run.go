@@ -390,6 +390,9 @@ func executeBuildLoop(
 	planner *PlannerState, llmModel llm.Model, commitSHA *string, framework, packageManager, providerName string, opts RunOptions,
 ) error {
 	buildSuccess := false
+	var lastErrorMsg string
+	stuckCount := 0
+
 	for {
 		planner.CurrentStep = "run_build_command"
 		_ = SavePlanner(sessDir, planner)
@@ -491,6 +494,19 @@ func executeBuildLoop(
 				errorMsg = tail
 			}
 		}
+
+		if errorMsg != "" && errorMsg == lastErrorMsg {
+			stuckCount++
+		} else {
+			stuckCount = 0
+		}
+		lastErrorMsg = errorMsg
+
+		if stuckCount >= 2 {
+			fmt.Printf("%s Stuck loop detected (same error %d times in a row). Escalating...\n", styleWarn, stuckCount+1)
+			retry.Count = retry.Max + 1 // Force exhaustion
+		}
+
 		step := "run_build_command"
 		now := time.Now().UTC()
 		planner.Error = ErrorInfo{Step: &step, Message: &errorMsg, OccurredAt: &now}
