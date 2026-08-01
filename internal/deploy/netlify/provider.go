@@ -196,11 +196,11 @@ func createSite(ctx context.Context, runner deploy.CommandRunner, workspaceRoot 
 	if token != "" {
 		accountArgs = append(accountArgs, "--auth", token)
 	}
-	
+
 	accountsOut, err := runner.Run(ctx, workspaceRoot, "netlify", accountArgs...)
 	if err != nil {
 		if strings.Contains(accountsOut, "Unauthorized") || strings.Contains(accountsOut, "401") {
-			return "", fmt.Errorf("netlify authentication failed: Unauthorized. Please check if your provided auth token is valid. (Token used: %s)", token)
+			return "", fmt.Errorf("netlify authentication failed: Unauthorized. Please check if your provided auth token is valid.")
 		}
 	} else {
 		start := strings.Index(accountsOut, "[\n")
