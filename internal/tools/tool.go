@@ -10,11 +10,12 @@ import (
 
 // ToolResult holds the outcome of a single tool execution.
 type ToolResult struct {
-	Success  bool
+	Success    bool
 	Output     string
 	Error      string
 	Duration   time.Duration
 	TokenUsage *TokenUsage
+	TargetFile string // the file the tool tried to modify (set by FixCode even on failure)
 }
 
 // TokenUsage tracks LLM usage for a tool execution.

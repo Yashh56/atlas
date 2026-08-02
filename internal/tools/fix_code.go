@@ -2,12 +2,16 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/zendev-sh/goai"
 
 	"github.com/Yashh56/atlas/internal/llm"
 	"github.com/Yashh56/atlas/internal/session"
@@ -17,9 +21,11 @@ import (
 // FixCode uses GoAI structured generation to fix build errors.
 // It depends on llm.Model (not llm.Client) so it can use GenerateStructured.
 type FixCode struct {
-	WorkspaceRoot string
-	Model         llm.Model // was: Client llm.Client
-	SessionDir    string    // needed to load project.json and build.json
+	WorkspaceRoot   string
+	Model           llm.Model // was: Client llm.Client
+	SessionDir      string    // needed to load project.json and build.json
+	LastPatchError  string    // set by orchestrator when the previous patch application failed
+	ForceIncludeFile string   // always include this file in context (e.g. the file last modified)
 }
 
 func (f FixCode) Name() string { return "fix_code" }
@@ -80,29 +86,147 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 		buildLog = "<no build log path>"
 	}
 
-	// 3. Attempt to find a relevant file to include
+	// 3. Attempt to find all relevant files to include as context
+	sourceExts := map[string]bool{
+		".go": true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true,
+		".json": true, ".vue": true, ".svelte": true, ".py": true,
+		".rs": true, ".toml": true, ".yaml": true, ".yml": true,
+		".html": true, ".css": true, ".md": true,
+	}
+
 	var fileContext string
+	loadedPaths := map[string]bool{}
+
+	// Always load ForceIncludeFile first — this is the file we previously modified,
+	// so the model must see its CURRENT state even if the build log points elsewhere.
+	if f.ForceIncludeFile != "" {
+		forceAbs := filepath.Join(f.WorkspaceRoot, f.ForceIncludeFile)
+		if content, err := os.ReadFile(forceAbs); err == nil {
+			fileContext = fmt.Sprintf("\nCurrent contents of %s (file previously modified — read carefully before proposing old_str):\n```\n%s\n```\n", f.ForceIncludeFile, string(content))
+			loadedPaths[forceAbs] = true
+		}
+	}
+
 	filePath := extractFilePath(buildLog)
 	if filePath != "" {
 		absPath := filepath.Join(f.WorkspaceRoot, filePath)
 		contentBytes, err := os.ReadFile(absPath)
 		if err == nil {
 			fileContext = fmt.Sprintf("\nContents of %s:\n```\n%s\n```\n", filePath, string(contentBytes))
+			loadedPaths[absPath] = true
+
+			// Load sibling source files from the same directory for immediate context
+			dirPath := filepath.Dir(absPath)
+			entries, dirErr := os.ReadDir(dirPath)
+			if dirErr == nil {
+				for _, entry := range entries {
+					if entry.IsDir() {
+						continue
+					}
+					ext := strings.ToLower(filepath.Ext(entry.Name()))
+					siblingAbs := filepath.Join(dirPath, entry.Name())
+					if loadedPaths[siblingAbs] || !sourceExts[ext] {
+						continue
+					}
+					siblingBytes, readErr := os.ReadFile(siblingAbs)
+					if readErr == nil && len(siblingBytes) < 8000 {
+						relSiblingPath := filepath.Join(filepath.Dir(filePath), entry.Name())
+						fileContext += fmt.Sprintf("\nContents of %s:\n```\n%s\n```\n", relSiblingPath, string(siblingBytes))
+						loadedPaths[siblingAbs] = true
+					}
+				}
+			}
+
+			// Always include package.json if this is a JS/TS/config file and we haven't already
+			pkgJSON := filepath.Join(f.WorkspaceRoot, "package.json")
+			if !loadedPaths[pkgJSON] {
+				if pkgBytes, pkgErr := os.ReadFile(pkgJSON); pkgErr == nil {
+					fileContext += fmt.Sprintf("\nContents of package.json:\n```\n%s\n```\n", string(pkgBytes))
+					loadedPaths[pkgJSON] = true
+				}
+			}
 		}
 	}
 
 	userPrompt := fmt.Sprintf("Framework: %s\n\nBuild Log Excerpt:\n```\n%s\n```\n%s", framework, buildLog, fileContext)
+	if f.LastPatchError != "" {
+		userPrompt += fmt.Sprintf("\n\n⚠️ Previous fix attempt FAILED to apply: %s\nThe old_str you used did not match the file exactly. Study the file contents above carefully and try a different, shorter, more exact old_str.", f.LastPatchError)
+	}
 
-	// 4. Call LLM with structured generation — GoAI handles JSON schema enforcement
-	fix, usage, err := llm.GenerateStructured[FixResponse](ctx, f.Model, systemPrompt, userPrompt)
+	// 4. Call LLM with structured generation — GoAI handles JSON schema enforcement and tool loop
+	fix, usage, err := llm.GenerateStructured[FixResponse](
+		ctx, f.Model, systemPrompt, userPrompt,
+		goai.WithMaxSteps(3),
+		goai.WithTools(ToGoAITools(f.WorkspaceRoot)...),
+	)
 	if err != nil {
-		// THIS is the error that was going missing before — make sure it actually
-		// reaches ToolResult.Error and gets printed by the orchestrator.
-		return ToolResult{
-			Success:  false,
-			Error:    fmt.Sprintf("structured generation failed: %v", err),
-			Duration: time.Since(start),
-		}, nil
+		// Attempt to recover from a parsing error if the raw output is in the error message
+		if strings.Contains(err.Error(), "parsing structured output") && strings.Contains(err.Error(), "(raw:") {
+			parts := strings.SplitN(err.Error(), "(raw:", 2)
+			if len(parts) == 2 {
+				rawJSON := strings.TrimSpace(strings.TrimSuffix(parts[1], ")"))
+				
+				// Often models leave extra text at the end, so let's try to extract from { to }
+				startIdx := strings.Index(rawJSON, "{")
+				endIdx := strings.LastIndex(rawJSON, "}")
+				if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+					extracted := rawJSON[startIdx : endIdx+1]
+					if parseErr := json.Unmarshal([]byte(extracted), &fix); parseErr == nil {
+						err = nil // Cleared error, we successfully extracted it!
+					}
+				}
+			}
+		}
+
+		if err != nil && (strings.Contains(err.Error(), "json mode cannot be combined with tool/function calling") || strings.Contains(strings.ToLower(err.Error()), "json mode") || strings.Contains(strings.ToLower(err.Error()), "max steps") || strings.Contains(err.Error(), "parsing structured output")) {
+			// Use GenerateText to bypass the strict JSON Schema + Tools conflict.
+			// Tools are disabled here to avoid provider-specific bugs (like Groq rejecting reasoning_content in tool-call history).
+			// We use a clean system prompt to ensure the model doesn't hallucinate tool calls based on the original skill prompt.
+			fallbackPrompt := systemPrompt
+			if idx := strings.Index(fallbackPrompt, "Before proposing a fix"); idx != -1 {
+				fallbackPrompt = fallbackPrompt[:idx]
+			}
+			fallbackPrompt += "\n\nIMPORTANT: Output ONLY the raw JSON object, no markdown fences, no explanation. DO NOT CALL ANY TOOLS. YOU MUST OUTPUT THE JSON RESULT IMMEDIATELY."
+			
+			textRes, textErr := goai.GenerateText(ctx, f.Model,
+				goai.WithSystem(fallbackPrompt),
+				goai.WithPrompt(userPrompt),
+				goai.WithMaxSteps(1),
+			)
+			if textErr != nil {
+				return ToolResult{
+					Success:  false,
+					Error:    fmt.Sprintf("structured fallback (GenerateText) failed: %v", textErr),
+					Duration: time.Since(start),
+				}, nil
+			}
+
+			// Clean markdown fences if the model ignored the instructions
+			rawJSON := strings.TrimSpace(textRes.Text)
+			startIdx := strings.Index(rawJSON, "{")
+			endIdx := strings.LastIndex(rawJSON, "}")
+			if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+				rawJSON = rawJSON[startIdx : endIdx+1]
+			}
+
+			if parseErr := json.Unmarshal([]byte(rawJSON), &fix); parseErr != nil {
+				return ToolResult{
+					Success:  false,
+					Error:    fmt.Sprintf("failed to parse fallback text as JSON: %v", parseErr),
+					Duration: time.Since(start),
+				}, nil
+			}
+			usage = &textRes.TotalUsage
+			err = nil // Clear the original error so we proceed
+		} else if err != nil {
+			// THIS is the error that was going missing before — make sure it actually
+			// reaches ToolResult.Error and gets printed by the orchestrator.
+			return ToolResult{
+				Success:  false,
+				Error:    fmt.Sprintf("structured generation failed: %v", err),
+				Duration: time.Since(start),
+			}, nil
+		}
 	}
 
 	var tu *TokenUsage
@@ -123,6 +247,21 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 		}, nil
 	}
 
+	if fix.OldStr == "" && fix.NewStr == "" {
+		// Model signalled it can't confidently fix — treat as a non-actionable response
+		errMsg := "LLM returned an empty old_str and new_str (model declined to propose a fix)"
+		if fix.Reasoning != "" {
+			errMsg += " (Reasoning: " + fix.Reasoning + ")"
+		}
+		return ToolResult{
+			Success:    false,
+			Error:      errMsg,
+			TargetFile: fix.File,
+			Duration:   time.Since(start),
+			TokenUsage: tu,
+		}, nil
+	}
+
 	// 5. Write file
 	patcher := PatchFile{
 		WorkspaceRoot: f.WorkspaceRoot,
@@ -134,13 +273,26 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 
 	writeRes, err := patcher.Execute(ctx, sess)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error(), Duration: time.Since(start), TokenUsage: tu}, nil
+		return ToolResult{Success: false, Error: err.Error(), TargetFile: fix.File, Duration: time.Since(start), TokenUsage: tu}, nil
 	}
 	if !writeRes.Success {
-		return ToolResult{Success: false, Error: writeRes.Error, Duration: time.Since(start), TokenUsage: tu}, nil
+		return ToolResult{Success: false, Error: writeRes.Error, TargetFile: fix.File, Duration: time.Since(start), TokenUsage: tu}, nil
 	}
 
-	output := fmt.Sprintf("Fixed: %s — %q", fix.File, fix.Reasoning)
+	// Generate a visual diff
+	diffBuilder := &strings.Builder{}
+	diffBuilder.WriteString(fmt.Sprintf("Fixed: %s — %q\n\n", fix.File, fix.Reasoning))
+	
+	redStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
+
+	for _, line := range strings.Split(fix.OldStr, "\n") {
+		diffBuilder.WriteString(redStyle.Render(fmt.Sprintf("- %s", line)) + "\n")
+	}
+	for _, line := range strings.Split(fix.NewStr, "\n") {
+		diffBuilder.WriteString(greenStyle.Render(fmt.Sprintf("+ %s", line)) + "\n")
+	}
+	output := diffBuilder.String()
 	return ToolResult{
 		Success:    true,
 		Output:     output,

@@ -160,7 +160,7 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		err = fmt.Errorf("orchestrator: workspace path %q does not exist", workspacePath)
 		return
 	}
-	fmt.Printf("%s\n\n", cliutil.FormatSuccess("Workspace", "resolved"))
+	fmt.Printf("%s\n", cliutil.FormatSuccess("Workspace", "resolved"))
 
 	store, storeErr := credentials.Open()
 	if storeErr != nil {
@@ -175,6 +175,7 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		err = fmt.Errorf("orchestrator: resolving LLM model: %w", err)
 		return
 	}
+	fmt.Printf("%s\n\n", cliutil.FormatSuccess("Model", llmModel.ModelID()))
 
 	if providerName != "" && opts.Action.IsDeploy() {
 		registry := deploy.NewRegistry()
@@ -392,6 +393,19 @@ func executeBuildLoop(
 	buildSuccess := false
 	var lastErrorMsg string
 	stuckCount := 0
+	llmFixAttempts := 0         // total LLM calls made (capped separately from build attempts)
+	const maxLLMFixes = 6       // hard ceiling on LLM invocations regardless of build count
+	var lastPatchError string   // last patch-application error to pass to the next LLM call
+	var forceIncludeFile string // file most recently targeted by a fix; always included in next LLM prompt
+	// Install dependencies before starting the build loop
+	if framework == "go" {
+		fmt.Printf("%s Fetching dependencies (go mod tidy & download)...\n", styleArrow)
+		tools.RunCommand{Command: "go", Args: []string{"mod", "tidy"}, Dir: ws.Root}.Execute(ctx, sess)
+		tools.RunCommand{Command: "go", Args: []string{"mod", "download"}, Dir: ws.Root}.Execute(ctx, sess)
+	} else if framework == "node" && packageManager != "" {
+		fmt.Printf("%s Installing dependencies (%s install)...\n", styleArrow, packageManager)
+		tools.RunCommand{Command: packageManager, Args: []string{"install"}, Dir: ws.Root}.Execute(ctx, sess)
+	}
 
 	for {
 		planner.CurrentStep = "run_build_command"
@@ -495,6 +509,27 @@ func executeBuildLoop(
 			}
 		}
 
+		// Deterministic Auto-Fix: If it's just missing dependencies, bypass the LLM and fix natively
+		if framework == "go" && (strings.Contains(errorMsg, "missing go.sum entry") || strings.Contains(errorMsg, "no required module provides package")) {
+			fmt.Printf("%s Missing dependencies detected. Running 'go mod tidy'...\n", styleArrow)
+			tidyCmd := tools.RunCommand{Command: "go", Args: []string{"mod", "tidy"}, Dir: ws.Root}
+			tidyRes, _ := tidyCmd.Execute(ctx, sess)
+			if tidyRes.Success {
+				fmt.Printf("%s Dependencies resolved. Rebuilding...\n", styleArrow)
+				continue
+			}
+		}
+
+		if framework == "node" && packageManager != "" && (strings.Contains(errorMsg, "Cannot find module") || strings.Contains(errorMsg, "npm ERR! missing script")) {
+			fmt.Printf("%s Missing dependencies detected. Running '%s install'...\n", styleArrow, packageManager)
+			installCmd := tools.RunCommand{Command: packageManager, Args: []string{"install"}, Dir: ws.Root}
+			installRes, _ := installCmd.Execute(ctx, sess)
+			if installRes.Success {
+				fmt.Printf("%s Dependencies resolved. Rebuilding...\n", styleArrow)
+				continue
+			}
+		}
+
 		if errorMsg != "" && errorMsg == lastErrorMsg {
 			stuckCount++
 		} else {
@@ -519,7 +554,7 @@ func executeBuildLoop(
 			break
 		}
 
-		if retry.Count > retry.Max {
+		if retry.Count >= retry.Max {
 			fmt.Printf("%s Exhausted retries. Escalating and reverting changes...\n", styleArrow)
 
 			// Restore from backups instead of git checkout
@@ -544,32 +579,66 @@ func executeBuildLoop(
 			return fmt.Errorf("build failed and exhausted fix attempts. reverted using file snapshots")
 		}
 
-		fmt.Printf("%s Attempting automatic fix...\n", styleArrow)
-		planner.CurrentStep = "fix_code"
-		_ = SavePlanner(sessDir, planner)
+		// Keep calling the LLM for fixes as long as we haven't burned the hard LLM ceiling.
+		// Patch failures (old_str not found) do NOT consume a build retry — only actual
+		// failed builds count toward retry.Max. The LLM ceiling (maxLLMFixes) is the
+		// safety valve against infinite LLM loops.
+		for llmFixAttempts < maxLLMFixes {
+			fmt.Printf("%s Attempting automatic fix...\n", styleArrow)
+			planner.CurrentStep = "fix_code"
+			_ = SavePlanner(sessDir, planner)
 
-		fixTool := tools.FixCode{
-			WorkspaceRoot: ws.Root,
-			Model:         llmModel,
-			SessionDir:    sessDir,
-		}
-		fixRes, err := fixTool.Execute(ctx, sess)
-		if err != nil {
-			return fmt.Errorf("orchestrator: fix_code: %w", err)
-		}
+			fixTool := tools.FixCode{
+				WorkspaceRoot:    ws.Root,
+				Model:            llmModel,
+				SessionDir:       sessDir,
+				LastPatchError:   lastPatchError,
+				ForceIncludeFile: forceIncludeFile,
+			}
+			fixRes, err := fixTool.Execute(ctx, sess)
+			if err != nil {
+				return fmt.Errorf("orchestrator: fix_code: %w", err)
+			}
+			llmFixAttempts++
+			planner.AddUsage(fixRes.TokenUsage)
 
-		planner.AddUsage(fixRes.TokenUsage)
+			if fixRes.Success {
+				// Patch applied — record the file and break to rebuild
+				forceIncludeFile = fixRes.TargetFile
+				lastPatchError = ""
+				fmt.Printf("  %s\n\n", fixRes.Output)
+				planner.Completed = append(planner.Completed, "fix_code")
+				_ = SavePlanner(sessDir, planner)
+				break
+			}
 
-		if fixRes.Success {
-			fmt.Printf("  %s\n\n", fixRes.Output)
-			planner.Completed = append(planner.Completed, "fix_code")
-		} else {
+			// Patch failed to apply — record the error for the next LLM call and retry
+			// WITHOUT moving the build-attempt counter
+			isPatchFailure := strings.Contains(fixRes.Error, "old_str not found") ||
+				strings.Contains(fixRes.Error, "old_str cannot be empty") ||
+				strings.Contains(fixRes.Error, "LLM returned an empty old_str")
+
+			if isPatchFailure {
+				lastPatchError = fixRes.Error
+				// Keep forceIncludeFile pointing at the file the model tried to patch
+				// so it will see its actual current content on the next attempt
+				if fixRes.TargetFile != "" {
+					forceIncludeFile = fixRes.TargetFile
+				}
+				fmt.Printf("  Fix attempt failed (patch error, retrying LLM): %s\n\n", fixRes.Error)
+				continue
+			}
+
+			// Other fix failure (LLM error, unknown file, etc.) — stop and rebuild to get a fresh error
+			lastPatchError = ""
 			fmt.Printf("  Fix attempt failed: %s\n\n", fixRes.Error)
 			planner.Failed = append(planner.Failed, "fix_code")
+			_ = SavePlanner(sessDir, planner)
+			break
 		}
-		_ = SavePlanner(sessDir, planner)
+
 		fmt.Printf("%s Rebuilding...\n", styleArrow)
-	}
+	} // end outer for loop
 
 	if !buildSuccess {
 		return fmt.Errorf("action %q aborted due to build failure", opts.Action)

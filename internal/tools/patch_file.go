@@ -39,7 +39,33 @@ func (p PatchFile) Execute(ctx context.Context, _ *session.Session) (ToolResult,
 		}, nil
 	}
 
-	// 2. Read existing content.
+	// 2. Handle new-file creation: if OldStr is empty and the file doesn't exist yet,
+	// treat this as a create request. Must be checked before ReadFile.
+	if p.OldStr == "" {
+		if _, statErr := os.Stat(targetPath); os.IsNotExist(statErr) {
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return ToolResult{
+					Success:  false,
+					Error:    fmt.Sprintf("creating directories for %s: %v", p.Path, err),
+					Duration: time.Since(start),
+				}, nil
+			}
+			if writeErr := os.WriteFile(targetPath, []byte(p.NewStr), 0o644); writeErr != nil {
+				return ToolResult{
+					Success:  false,
+					Error:    fmt.Sprintf("creating %s: %v", p.Path, writeErr),
+					Duration: time.Since(start),
+				}, nil
+			}
+			return ToolResult{
+				Success:  true,
+				Output:   fmt.Sprintf("Created new file %s", rel),
+				Duration: time.Since(start),
+			}, nil
+		}
+	}
+
+	// 3. Read existing content.
 	contentBytes, err := os.ReadFile(targetPath)
 	if err != nil {
 		return ToolResult{
@@ -50,10 +76,19 @@ func (p PatchFile) Execute(ctx context.Context, _ *session.Session) (ToolResult,
 	}
 	content := string(contentBytes)
 
-	// 3. Line Ending Detection & Normalization
+	// 4. Line Ending Detection & Normalization
 	// The LLM often outputs "\n" (LF) regardless of the file's original line endings.
 	// If the file uses "\r\n" (CRLF), we must format OldStr and NewStr to match it.
 	isCRLF := strings.Contains(content, "\r\n")
+
+	if p.OldStr == "" {
+		// File already exists: empty old_str is not allowed for existing files.
+		return ToolResult{
+			Success:  false,
+			Error:    "old_str cannot be empty for an existing file",
+			Duration: time.Since(start),
+		}, nil
+	}
 
 	oldStrNormalized := p.OldStr
 	newStrNormalized := p.NewStr
