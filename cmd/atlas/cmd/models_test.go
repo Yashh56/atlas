@@ -1,9 +1,15 @@
 package cmd
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Yashh56/atlas/internal/config"
 	"github.com/Yashh56/atlas/internal/credentials"
 )
 
@@ -14,10 +20,106 @@ func TestModelsSet_UnknownProvider(t *testing.T) {
 	}
 }
 
-func TestModelsSet_LocalProvider(t *testing.T) {
+func TestModelsSet_LocalProvider_NetworkError(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, _ := os.Getwd()
+	os.Chdir(tempDir)
+	defer os.Chdir(origWd)
+	
+	// Create .atlas to satisfy config paths
+	os.MkdirAll(".atlas", 0755)
+
+	// Write a config pointing to an invalid port to ensure connection refused
+	os.WriteFile(filepath.Join(".atlas", "config.json"), []byte(`{"local_llm_base_url":"http://127.0.0.1:65432/v1"}`), 0644)
+
 	err := runModelsSet(nil, []string{"local"})
-	if err == nil || !strings.Contains(err.Error(), "does not use an API key") {
-		t.Fatalf("expected local provider error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "no local model runtime found") {
+		t.Fatalf("expected network error, got %v", err)
+	}
+}
+
+func TestModelsSet_LocalProvider_ZeroModels(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, _ := os.Getwd()
+	os.Chdir(tempDir)
+	defer os.Chdir(origWd)
+	
+	os.MkdirAll(".atlas", 0755)
+	
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"data":[]}`)
+	}))
+	defer ts.Close()
+	
+	os.WriteFile(filepath.Join(".atlas", "config.json"), []byte(fmt.Sprintf(`{"local_llm_base_url":"%s"}`, ts.URL)), 0644)
+
+	err := runModelsSet(nil, []string{"local"})
+	if err == nil || !strings.Contains(err.Error(), "No models found") {
+		t.Fatalf("expected zero models error, got %v", err)
+	}
+}
+
+func TestModelsSet_LocalProvider_NonInteractiveValid(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, _ := os.Getwd()
+	os.Chdir(tempDir)
+	defer os.Chdir(origWd)
+	
+	os.MkdirAll(".atlas", 0755)
+	
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"data":[{"id":"qwen2.5-coder:7b"}]}`)
+	}))
+	defer ts.Close()
+	
+	os.WriteFile(filepath.Join(".atlas", "config.json"), []byte(fmt.Sprintf(`{"local_llm_base_url":"%s"}`, ts.URL)), 0644)
+	
+	// Set the flag
+	originalFlag := modelNameFlag
+	modelNameFlag = "qwen2.5-coder:7b"
+	defer func() { modelNameFlag = originalFlag }()
+
+	err := runModelsSet(nil, []string{"local"})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	
+	// verify it was written
+	cfg, err := config.Load(filepath.Join(".atlas", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LLMProvider != "local" || cfg.DefaultModel != "qwen2.5-coder:7b" {
+		t.Fatalf("config not saved correctly: %+v", cfg)
+	}
+}
+
+func TestModelsSet_LocalProvider_NonInteractiveInvalid(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, _ := os.Getwd()
+	os.Chdir(tempDir)
+	defer os.Chdir(origWd)
+	
+	os.MkdirAll(".atlas", 0755)
+	
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"data":[{"id":"qwen2.5-coder:7b"}]}`)
+	}))
+	defer ts.Close()
+	
+	os.WriteFile(filepath.Join(".atlas", "config.json"), []byte(fmt.Sprintf(`{"local_llm_base_url":"%s"}`, ts.URL)), 0644)
+	
+	// Set the flag
+	originalFlag := modelNameFlag
+	modelNameFlag = "llama3"
+	defer func() { modelNameFlag = originalFlag }()
+
+	err := runModelsSet(nil, []string{"local"})
+	if err == nil || !strings.Contains(err.Error(), "model \"llama3\" not found in local runtime") {
+		t.Fatalf("expected missing model error, got %v", err)
 	}
 }
 

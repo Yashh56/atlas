@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+	"context"
 
+	"github.com/Yashh56/atlas/internal/config"
 	"github.com/Yashh56/atlas/internal/credentials"
+	"github.com/Yashh56/atlas/internal/llm"
 	"github.com/Yashh56/atlas/internal/orchestrator"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -21,6 +26,8 @@ type wizardStep int
 const (
 	stepLoading wizardStep = iota
 	stepModelSelect
+	stepLocalModelLoading
+	stepLocalModelSelect
 	stepModelInput
 	stepActionSelect
 	stepProviderSelect
@@ -49,6 +56,30 @@ type wizardModel struct {
 
 type initCompleteMsg struct{}
 type advanceStepMsg struct{}
+
+type localModelsFetchedMsg struct {
+	models []string
+	err    error
+}
+
+func fetchLocalModelsCmd() tea.Cmd {
+	return func() tea.Msg {
+		configPath := filepath.Join(".atlas", "config.json")
+		cfg, err := config.Load(configPath)
+		baseURL := "http://localhost:11434/v1"
+		if err == nil && cfg.LocalLLMBaseURL != "" {
+			baseURL = cfg.LocalLLMBaseURL
+		}
+		lister, ok := llm.NewModelLister("local", "", baseURL)
+		if !ok {
+			return localModelsFetchedMsg{err: fmt.Errorf("local model lister not available")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		models, err := lister.ListModels(ctx)
+		return localModelsFetchedMsg{models: models, err: err}
+	}
+}
 
 func RunWizard(modelFlag string, actionFlag orchestrator.Action, providerFlag string) (string, orchestrator.Action, string, error) {
 	store, _ := credentials.Open()
@@ -153,7 +184,7 @@ func (m *wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h, v := docStyle.GetFrameSize()
 		m.width = msg.Width - h
 		m.height = msg.Height - v
-		if m.step == stepModelSelect || m.step == stepActionSelect || m.step == stepProviderSelect {
+		if m.step == stepModelSelect || m.step == stepActionSelect || m.step == stepProviderSelect || m.step == stepLocalModelSelect {
 			m.list.SetSize(m.width, m.height)
 		}
 	case initCompleteMsg:
@@ -166,11 +197,31 @@ func (m *wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
+	case localModelsFetchedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, tea.Quit
+		}
+		if len(msg.models) == 0 {
+			m.err = fmt.Errorf("No models found — pull one first, e.g. 'ollama pull qwen2.5-coder:7b'")
+			return m, tea.Quit
+		}
+		var items []list.Item
+		for _, model := range msg.models {
+			items = append(items, item{title: model, desc: "local model"})
+		}
+		m.list = list.New(items, list.NewDefaultDelegate(), m.width, m.height)
+		m.list.Title = "Select Local Model"
+		m.list.SetShowStatusBar(false)
+		m.step = stepLocalModelSelect
+		return m, nil
 	}
 
 	switch m.step {
 	case stepModelSelect:
 		return m.updateModelSelect(msg)
+	case stepLocalModelSelect:
+		return m.updateLocalModelSelect(msg)
 	case stepModelInput:
 		return m.updateModelInput(msg)
 	case stepActionSelect:
@@ -193,7 +244,9 @@ func (m *wizardModel) View() string {
 	switch m.step {
 	case stepLoading:
 		return fmt.Sprintf("\n\n   %s Initializing Atlas interactive wizard...\n\n", m.spinner.View())
-	case stepModelSelect:
+	case stepLocalModelLoading:
+		return fmt.Sprintf("\n\n   %s Discovering local models...\n\n", m.spinner.View())
+	case stepModelSelect, stepLocalModelSelect:
 		return docStyle.Render(m.list.View())
 	case stepModelInput:
 		return fmt.Sprintf(
@@ -227,13 +280,38 @@ func (m *wizardModel) updateModelSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
 				m.selectedModel = i.title
-				provider := getProviderForModel(m.selectedModel)
-				if strings.Contains(i.desc, "✓") || provider == "local" {
+				if m.selectedModel == "local" {
+					m.step = stepLocalModelLoading
+					return m, fetchLocalModelsCmd()
+				}
+				if strings.Contains(i.desc, "✓") {
 					return m, func() tea.Msg { return advanceStepMsg{} }
 				}
 				m.step = stepModelInput
 				m.textInput.Reset()
 				return m, nil
+			}
+		}
+	}
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+func (m *wizardModel) updateLocalModelSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "enter" {
+			i, ok := m.list.SelectedItem().(item)
+			if ok {
+				m.selectedModel = i.title
+				configPath := filepath.Join(".atlas", "config.json")
+				if cfg, err := config.Load(configPath); err == nil {
+					cfg.LLMProvider = "local"
+					cfg.DefaultModel = m.selectedModel
+					_ = cfg.Save(configPath)
+				}
+				return m, func() tea.Msg { return advanceStepMsg{} }
 			}
 		}
 	}
@@ -382,8 +460,12 @@ func createModelList(store *credentials.Store) list.Model {
 			}
 		}
 
-		for _, m := range p.Models {
-			items = append(items, item{title: m, desc: fmt.Sprintf("%s (%s)", p.Name, status)})
+		if p.Name == "local" {
+			items = append(items, item{title: "local", desc: "local (discover models dynamically)"})
+		} else {
+			for _, m := range p.Models {
+				items = append(items, item{title: m, desc: fmt.Sprintf("%s (%s)", p.Name, status)})
+			}
 		}
 	}
 

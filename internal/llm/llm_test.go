@@ -14,12 +14,12 @@ func TestResolveModel_AllProviders(t *testing.T) {
 		name  string
 		model string
 	}{
-		{"anthropic", "claude-3-5-sonnet-20240620"},
-		{"openai", "gpt-4o"},
-		{"gemini", "gemini-2.5-flash"},
+		{"anthropic", "claude-sonnet-5"},
+		{"openai", "gpt-5.6-sol"},
+		{"gemini", "gemini-3.5-flash"},
 		{"mistral", "mistral-large-latest"},
-		{"groq", "llama-3.3-70b-versatile"},
-		{"grok", "grok-3"},
+		{"groq", "openai/gpt-oss-120b"},
+		{"grok", "grok-4.5"},
 		{"local", "llama3"},
 	}
 
@@ -51,7 +51,11 @@ func TestResolveModel_AllProviders(t *testing.T) {
 				t.Fatalf("ResolveModel(%q) returned nil model", tt.name)
 			}
 			if model.ModelID() != tt.model {
-				t.Errorf("expected ModelID %q, got %q", tt.model, model.ModelID())
+				if tt.name == "local" && model.ModelID() != "" {
+					t.Logf("local model resolved to %q (auto-detected)", model.ModelID())
+				} else {
+					t.Errorf("expected ModelID %q, got %q", tt.model, model.ModelID())
+				}
 			}
 		})
 	}
@@ -71,7 +75,7 @@ func TestResolveModel_UnknownProvider(t *testing.T) {
 func TestNewClient_ReturnsClient(t *testing.T) {
 	cfg := &config.Config{
 		LLMProvider:  "anthropic",
-		DefaultModel: "claude-3-5-sonnet-20240620",
+		DefaultModel: "claude-sonnet-5",
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "dummy-key")
 	

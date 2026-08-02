@@ -51,22 +51,24 @@ func resolveAPIKey(store *credentials.Store, provider, envVar string) (string, e
 func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 	modelName := cfg.LLMProvider // user now selects exact model name here
 
-	// Legacy fallback if someone still has "anthropic" in their config
+	// Legacy fallback if someone still has a bare provider name in their config.
+	// These are routing defaults only — not recommendations for what to use.
+	// Model catalog display is handled separately in cmd/atlas/cmd/models.go.
 	switch modelName {
 	case "anthropic":
-		modelName = "claude-3-5-sonnet-20240620"
+		modelName = "claude-sonnet-5"
 	case "openai":
-		modelName = "gpt-4o"
+		modelName = "gpt-5.6-sol"
 	case "gemini":
-		modelName = "gemini-1.5-pro-latest"
+		modelName = "gemini-3.5-flash"
 	case "mistral":
-		modelName = "mistral-large-latest"
+		modelName = "mistral-medium-3.5" // auto-updating alias, intentionally not a dated snapshot
 	case "groq":
-		modelName = "llama3-70b-8192"
+		modelName = "openai/gpt-oss-120b"
 	case "grok":
-		modelName = "grok-beta"
+		modelName = "grok-4.5"
 	case "local":
-		modelName = "llama3"
+		modelName = "llama3" // routing fallback only — local models are not statically enumerable
 	}
 
 	// Support cfg.DefaultModel if it's explicitly provided and valid
@@ -75,54 +77,90 @@ func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 	}
 
 	if modelName == "" {
-		modelName = "claude-3-5-sonnet-20240620"
+		modelName = "claude-sonnet-5" // default when no provider configured
 	}
 
 	// Match by prefix or explicit name
 	if strings.HasPrefix(modelName, "claude") {
 		key, err := resolveAPIKey(store, "anthropic", "ANTHROPIC_API_KEY")
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		os.Setenv("ANTHROPIC_API_KEY", key)
 		return anthropic.Chat(modelName), nil
 	}
 
 	if strings.HasPrefix(modelName, "gpt-") || strings.HasPrefix(modelName, "o1-") {
 		key, err := resolveAPIKey(store, "openai", "OPENAI_API_KEY")
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		os.Setenv("OPENAI_API_KEY", key)
 		return openai.Chat(modelName), nil
 	}
 
 	if strings.HasPrefix(modelName, "gemini") {
 		key, err := resolveAPIKey(store, "gemini", "GEMINI_API_KEY")
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		os.Setenv("GEMINI_API_KEY", key)
 		return google.Chat(modelName), nil
 	}
 
 	if strings.HasPrefix(modelName, "mistral") || strings.HasPrefix(modelName, "pixtral") {
 		key, err := resolveAPIKey(store, "mistral", "MISTRAL_API_KEY")
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		os.Setenv("MISTRAL_API_KEY", key)
 		return mistral.Chat(modelName), nil
 	}
 
-	if (strings.HasPrefix(modelName, "llama-") || strings.HasPrefix(modelName, "llama3-") || strings.HasPrefix(modelName, "mixtral-")) && cfg.LLMProvider != "local" && modelName != "llama3" {
+	if cfg.LLMProvider == "groq" || ((strings.HasPrefix(modelName, "llama-") || strings.HasPrefix(modelName, "llama3-") || strings.HasPrefix(modelName, "mixtral-")) && cfg.LLMProvider != "local" && modelName != "llama3") {
 		key, err := resolveAPIKey(store, "groq", "GROQ_API_KEY")
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		os.Setenv("GROQ_API_KEY", key)
 		return groq.Chat(modelName), nil
 	}
 
 	if strings.HasPrefix(modelName, "grok") {
 		key, err := resolveAPIKey(store, "grok", "XAI_API_KEY")
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		os.Setenv("XAI_API_KEY", key)
 		return xai.Chat(modelName), nil
 	}
 
 	if cfg.LLMProvider == "local" || modelName == "llama3" || strings.HasPrefix(modelName, "local") {
-		return compat.Chat(modelName, compat.WithBaseURL(cfg.LocalLLMBaseURL)), nil
+		actualModel := modelName
+		if strings.HasPrefix(modelName, "local:") {
+			actualModel = strings.TrimPrefix(modelName, "local:")
+		}
+		
+		if actualModel == "local" || actualModel == "llama3" {
+			actualModel = "llama3"
+			// Try to auto-detect if possible to avoid failing when llama3 isn't pulled
+			if lister, ok := NewModelLister("local", "", cfg.LocalLLMBaseURL); ok {
+				if models, err := lister.ListModels(context.Background()); err == nil && len(models) > 0 {
+					hasLlama3 := false
+					for _, m := range models {
+						if m == "llama3" {
+							hasLlama3 = true
+							break
+						}
+					}
+					if !hasLlama3 {
+						actualModel = models[0] // pick the first available local model
+					}
+				}
+			}
+		}
+
+		return compat.Chat(actualModel, compat.WithBaseURL(cfg.LocalLLMBaseURL)), nil
 	}
 
 	return nil, fmt.Errorf("unknown LLM provider or model: %q", cfg.LLMProvider)
@@ -162,12 +200,17 @@ func (c *goaiClient) Complete(ctx context.Context, systemPrompt, userPrompt stri
 
 // GenerateStructured is a free generic function, not a Client method, because
 // Go interfaces can't have generic methods. FixCode calls this directly.
-func GenerateStructured[T any](ctx context.Context, model Model, systemPrompt, userPrompt string) (T, *provider.Usage, error) {
+func GenerateStructured[T any](ctx context.Context, model Model, systemPrompt, userPrompt string, opts ...goai.Option) (T, *provider.Usage, error) {
 	var zero T
-	result, err := goai.GenerateObject[T](ctx, model,
+
+	// Combine default prompts with user options
+	allOpts := []goai.Option{
 		goai.WithSystem(systemPrompt),
 		goai.WithPrompt(userPrompt),
-	)
+	}
+	allOpts = append(allOpts, opts...)
+
+	result, err := goai.GenerateObject[T](ctx, model, allOpts...)
 	if err != nil {
 		return zero, nil, err
 	}

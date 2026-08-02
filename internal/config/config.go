@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Config holds the Atlas runtime configuration.
@@ -43,4 +44,23 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: malformed JSON in %s: %w", path, err)
 	}
 	return &cfg, nil
+}
+
+// Save writes the Config to the JSON file at path.
+// It creates any necessary parent directories.
+func (c *Config) Save(path string) error {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("config: marshaling json: %w", err)
+	}
+	
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("config: creating dir %s: %w", filepath.Dir(path), err)
+	}
+	
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("config: writing %s: %w", path, err)
+	}
+	
+	return nil
 }

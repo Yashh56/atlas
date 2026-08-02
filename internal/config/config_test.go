@@ -53,3 +53,30 @@ func TestLoad_MalformedFile_ReturnsError(t *testing.T) {
 		t.Fatal("expected error for malformed JSON, got nil")
 	}
 }
+
+func TestSave_ValidConfig_PersistsValues(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "atlas.json")
+	
+	cfg := &config.Config{
+		DefaultModel: "test-model",
+		LLMProvider: "test-provider",
+		LocalLLMBaseURL: "http://test:1234",
+	}
+	
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("unexpected error saving config: %v", err)
+	}
+	
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error loading saved config: %v", err)
+	}
+	
+	if loaded.DefaultModel != "test-model" {
+		t.Errorf("expected test-model, got %q", loaded.DefaultModel)
+	}
+	if loaded.LocalLLMBaseURL != "http://test:1234" {
+		t.Errorf("expected http://test:1234, got %q", loaded.LocalLLMBaseURL)
+	}
+}
