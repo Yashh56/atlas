@@ -108,7 +108,8 @@ func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 		return google.Chat(modelName), nil
 	}
 
-	if strings.HasPrefix(modelName, "mistral") || strings.HasPrefix(modelName, "pixtral") {
+	if strings.HasPrefix(modelName, "mistral") || strings.HasPrefix(modelName, "pixtral") ||
+		strings.HasPrefix(modelName, "codestral") || strings.HasPrefix(modelName, "devstral") {
 		key, err := resolveAPIKey(store, "mistral", "MISTRAL_API_KEY")
 		if err != nil {
 			return nil, err
