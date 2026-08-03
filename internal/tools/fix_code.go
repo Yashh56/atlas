@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/zendev-sh/goai"
+	"github.com/zendev-sh/goai/provider"
 
 	"github.com/Yashh56/atlas/internal/llm"
 	"github.com/Yashh56/atlas/internal/session"
@@ -21,11 +22,12 @@ import (
 // FixCode uses GoAI structured generation to fix build errors.
 // It depends on llm.Model (not llm.Client) so it can use GenerateStructured.
 type FixCode struct {
-	WorkspaceRoot   string
-	Model           llm.Model // was: Client llm.Client
-	SessionDir      string    // needed to load project.json and build.json
-	LastPatchError  string    // set by orchestrator when the previous patch application failed
-	ForceIncludeFile string   // always include this file in context (e.g. the file last modified)
+	WorkspaceRoot    string
+	Model            llm.Model // was: Client llm.Client
+	ProviderName     string    // e.g. "mistral", "groq", "openai" — used to skip incompatible paths
+	SessionDir       string    // needed to load project.json and build.json
+	LastPatchError   string    // set by orchestrator when the previous patch application failed
+	ForceIncludeFile string    // always include this file in context (e.g. the file last modified)
 }
 
 func (f FixCode) Name() string { return "fix_code" }
@@ -121,6 +123,37 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 			if dirErr == nil {
 				for _, entry := range entries {
 					if entry.IsDir() {
+						// One level deep — walk into subdirectories to find package files
+						// (e.g. utils/utils.go) that the error might originate from.
+						skipDir := map[string]bool{
+							".git": true, "node_modules": true, ".atlas": true,
+							"vendor": true, "dist": true, "build": true, "out": true,
+						}
+						if skipDir[entry.Name()] {
+							continue
+						}
+						subDir := filepath.Join(dirPath, entry.Name())
+						subEntries, subErr := os.ReadDir(subDir)
+						if subErr != nil {
+							continue
+						}
+						for _, subEntry := range subEntries {
+							if subEntry.IsDir() {
+								continue
+							}
+							ext := strings.ToLower(filepath.Ext(subEntry.Name()))
+							subAbs := filepath.Join(subDir, subEntry.Name())
+							if loadedPaths[subAbs] || !sourceExts[ext] {
+								continue
+							}
+							subBytes, readErr := os.ReadFile(subAbs)
+							if readErr == nil && len(subBytes) < 8000 {
+								relSub, _ := filepath.Rel(f.WorkspaceRoot, subAbs)
+								relSub = filepath.ToSlash(relSub)
+								fileContext += fmt.Sprintf("\nContents of %s:\n```\n%s\n```\n", relSub, string(subBytes))
+								loadedPaths[subAbs] = true
+							}
+						}
 						continue
 					}
 					ext := strings.ToLower(filepath.Ext(entry.Name()))
@@ -153,80 +186,103 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 		userPrompt += fmt.Sprintf("\n\n⚠️ Previous fix attempt FAILED to apply: %s\nThe old_str you used did not match the file exactly. Study the file contents above carefully and try a different, shorter, more exact old_str.", f.LastPatchError)
 	}
 
-	// 4. Call LLM with structured generation — GoAI handles JSON schema enforcement and tool loop
-	fix, usage, err := llm.GenerateStructured[FixResponse](
-		ctx, f.Model, systemPrompt, userPrompt,
-		goai.WithMaxSteps(3),
-		goai.WithTools(ToGoAITools(f.WorkspaceRoot)...),
-	)
-	if err != nil {
-		// Attempt to recover from a parsing error if the raw output is in the error message
-		if strings.Contains(err.Error(), "parsing structured output") && strings.Contains(err.Error(), "(raw:") {
-			parts := strings.SplitN(err.Error(), "(raw:", 2)
-			if len(parts) == 2 {
-				rawJSON := strings.TrimSpace(strings.TrimSuffix(parts[1], ")"))
-				
-				// Often models leave extra text at the end, so let's try to extract from { to }
-				startIdx := strings.Index(rawJSON, "{")
-				endIdx := strings.LastIndex(rawJSON, "}")
-				if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
-					extracted := rawJSON[startIdx : endIdx+1]
-					if parseErr := json.Unmarshal([]byte(extracted), &fix); parseErr == nil {
-						err = nil // Cleared error, we successfully extracted it!
+	// 4. Call LLM with structured generation — GoAI handles JSON schema enforcement and tool loop.
+	// Providers that are known to reject tool calling + JSON mode simultaneously (e.g. Mistral)
+	// skip directly to the text-generation fallback to avoid the full timeout cost.
+	// Mistral-family providers (mistral, codestral, devstral, pixtral) reject the combination
+	// of JSON structured output + tool calling. Skip straight to the text-generation fallback
+	// to avoid burning the full 60-second timeout on every fix attempt.
+	isMistralFamily := strings.EqualFold(f.ProviderName, "mistral") ||
+		strings.HasPrefix(strings.ToLower(f.ProviderName), "codestral") ||
+		strings.HasPrefix(strings.ToLower(f.ProviderName), "devstral") ||
+		strings.HasPrefix(strings.ToLower(f.ProviderName), "pixtral")
+	skipStructured := isMistralFamily
+
+	var fix FixResponse
+	var usage *provider.Usage
+	var genErr error
+
+	if !skipStructured {
+		llmCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+
+		fix, usage, genErr = llm.GenerateStructured[FixResponse](
+			llmCtx, f.Model, systemPrompt, userPrompt,
+			goai.WithMaxSteps(3),
+			goai.WithTools(ToGoAITools(f.WorkspaceRoot)...),
+		)
+		if genErr != nil {
+			// Attempt to recover from a parsing error if the raw output is in the error message
+			if strings.Contains(genErr.Error(), "parsing structured output") && strings.Contains(genErr.Error(), "(raw:") {
+				parts := strings.SplitN(genErr.Error(), "(raw:", 2)
+				if len(parts) == 2 {
+					rawJSON := strings.TrimSpace(strings.TrimSuffix(parts[1], ")"))
+					startIdx := strings.Index(rawJSON, "{")
+					endIdx := strings.LastIndex(rawJSON, "}")
+					if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+						extracted := rawJSON[startIdx : endIdx+1]
+						if parseErr := json.Unmarshal([]byte(extracted), &fix); parseErr == nil {
+							genErr = nil
+						}
 					}
 				}
 			}
 		}
+	}
 
-		if err != nil && (strings.Contains(err.Error(), "json mode cannot be combined with tool/function calling") || strings.Contains(strings.ToLower(err.Error()), "json mode") || strings.Contains(strings.ToLower(err.Error()), "max steps") || strings.Contains(err.Error(), "parsing structured output")) {
-			// Use GenerateText to bypass the strict JSON Schema + Tools conflict.
-			// Tools are disabled here to avoid provider-specific bugs (like Groq rejecting reasoning_content in tool-call history).
-			// We use a clean system prompt to ensure the model doesn't hallucinate tool calls based on the original skill prompt.
-			fallbackPrompt := systemPrompt
-			if idx := strings.Index(fallbackPrompt, "Before proposing a fix"); idx != -1 {
-				fallbackPrompt = fallbackPrompt[:idx]
-			}
-			fallbackPrompt += "\n\nIMPORTANT: Output ONLY the raw JSON object, no markdown fences, no explanation. DO NOT CALL ANY TOOLS. YOU MUST OUTPUT THE JSON RESULT IMMEDIATELY."
-			
-			textRes, textErr := goai.GenerateText(ctx, f.Model,
-				goai.WithSystem(fallbackPrompt),
-				goai.WithPrompt(userPrompt),
-				goai.WithMaxSteps(1),
-			)
-			if textErr != nil {
-				return ToolResult{
-					Success:  false,
-					Error:    fmt.Sprintf("structured fallback (GenerateText) failed: %v", textErr),
-					Duration: time.Since(start),
-				}, nil
-			}
+	// Fall back to plain text generation when:
+	//  - The provider doesn't support tool calling + JSON mode together (Mistral)
+	//  - The structured call failed with a known incompatibility or timeout
+	needsFallback := skipStructured || (genErr != nil && (strings.Contains(genErr.Error(), "json mode cannot be combined with tool/function calling") || strings.Contains(strings.ToLower(genErr.Error()), "json mode") || strings.Contains(strings.ToLower(genErr.Error()), "max steps") || strings.Contains(genErr.Error(), "parsing structured output") || strings.Contains(genErr.Error(), "reasoning_content is unsupported") || strings.Contains(genErr.Error(), "reasoning_content") || strings.Contains(genErr.Error(), "context deadline exceeded")))
+	if needsFallback {
+		// Use GenerateText to bypass the strict JSON Schema + Tools conflict.
+		// Tools are disabled here to avoid provider-specific bugs (like Groq rejecting reasoning_content in tool-call history).
+		// We use a clean system prompt to ensure the model doesn't hallucinate tool calls based on the original skill prompt.
+		fallbackPrompt := systemPrompt
+		if idx := strings.Index(fallbackPrompt, "Before proposing a fix"); idx != -1 {
+			fallbackPrompt = fallbackPrompt[:idx]
+		}
+		fallbackPrompt += "\n\nIMPORTANT: Output ONLY the raw JSON object, no markdown fences, no explanation. DO NOT CALL ANY TOOLS. YOU MUST OUTPUT THE JSON RESULT IMMEDIATELY.\nYour JSON object MUST conform EXACTLY to this structure:\n{\n  \"file\": \"path to the file to modify\",\n  \"old_str\": \"the exact characters to replace\",\n  \"new_str\": \"the exact characters to replace them with\",\n  \"reasoning\": \"brief explanation of the fix\"\n}"
 
-			// Clean markdown fences if the model ignored the instructions
-			rawJSON := strings.TrimSpace(textRes.Text)
-			startIdx := strings.Index(rawJSON, "{")
-			endIdx := strings.LastIndex(rawJSON, "}")
-			if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
-				rawJSON = rawJSON[startIdx : endIdx+1]
-			}
+		fallbackCtx, fallbackCancel := context.WithTimeout(ctx, 60*time.Second)
+		defer fallbackCancel()
 
-			if parseErr := json.Unmarshal([]byte(rawJSON), &fix); parseErr != nil {
-				return ToolResult{
-					Success:  false,
-					Error:    fmt.Sprintf("failed to parse fallback text as JSON: %v", parseErr),
-					Duration: time.Since(start),
-				}, nil
-			}
-			usage = &textRes.TotalUsage
-			err = nil // Clear the original error so we proceed
-		} else if err != nil {
-			// THIS is the error that was going missing before — make sure it actually
-			// reaches ToolResult.Error and gets printed by the orchestrator.
+		textRes, textErr := goai.GenerateText(fallbackCtx, f.Model,
+			goai.WithSystem(fallbackPrompt),
+			goai.WithPrompt(userPrompt),
+			goai.WithMaxSteps(1),
+		)
+		if textErr != nil {
 			return ToolResult{
 				Success:  false,
-				Error:    fmt.Sprintf("structured generation failed: %v", err),
+				Error:    fmt.Sprintf("structured fallback (GenerateText) failed: %v", textErr),
 				Duration: time.Since(start),
 			}, nil
 		}
+
+		// Clean markdown fences if the model ignored the instructions
+		rawJSON := strings.TrimSpace(textRes.Text)
+		startIdx := strings.Index(rawJSON, "{")
+		endIdx := strings.LastIndex(rawJSON, "}")
+		if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+			rawJSON = rawJSON[startIdx : endIdx+1]
+		}
+
+		if parseErr := json.Unmarshal([]byte(rawJSON), &fix); parseErr != nil {
+			return ToolResult{
+				Success:  false,
+				Error:    fmt.Sprintf("failed to parse fallback text as JSON: %v", parseErr),
+				Duration: time.Since(start),
+			}, nil
+		}
+		usage = &textRes.TotalUsage
+	} else if genErr != nil {
+		// Structured generation failed with an unrecognized error — surface it.
+		return ToolResult{
+			Success:  false,
+			Error:    fmt.Sprintf("structured generation failed: %v", genErr),
+			Duration: time.Since(start),
+		}, nil
 	}
 
 	var tu *TokenUsage
@@ -303,7 +359,7 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 
 // extractFilePath is a simple heuristic to find a file path in the build log.
 func extractFilePath(log string) string {
-	re := regexp.MustCompile(`([a-zA-Z0-9_\-\.\/]+\.(go|ts|tsx|js|jsx|json|py|rs|c|cpp|h))`)
+	re := regexp.MustCompile(`([a-zA-Z0-9_\-\.\/\\]+\.(go|ts|tsx|js|jsx|json|py|rs|c|cpp|h)):\d+`)
 	matches := re.FindStringSubmatch(log)
 	if len(matches) > 1 {
 		path := matches[1]

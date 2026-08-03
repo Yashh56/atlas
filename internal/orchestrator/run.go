@@ -394,7 +394,7 @@ func executeBuildLoop(
 	var lastErrorMsg string
 	stuckCount := 0
 	llmFixAttempts := 0         // total LLM calls made (capped separately from build attempts)
-	const maxLLMFixes = 6       // hard ceiling on LLM invocations regardless of build count
+	const maxLLMFixes = 30      // hard ceiling on LLM invocations regardless of build count
 	var lastPatchError string   // last patch-application error to pass to the next LLM call
 	var forceIncludeFile string // file most recently targeted by a fix; always included in next LLM prompt
 	// Install dependencies before starting the build loop
@@ -533,6 +533,12 @@ func executeBuildLoop(
 		if errorMsg != "" && errorMsg == lastErrorMsg {
 			stuckCount++
 		} else {
+			// Error changed — the last fix made progress. Reset the build retry counter
+			// so we don't exhaust attempts while making forward progress.
+			if lastErrorMsg != "" {
+				retry.Count = 1
+				planner.Retries["fix_and_rebuild"] = retry
+			}
 			stuckCount = 0
 		}
 		lastErrorMsg = errorMsg
@@ -591,6 +597,7 @@ func executeBuildLoop(
 			fixTool := tools.FixCode{
 				WorkspaceRoot:    ws.Root,
 				Model:            llmModel,
+				ProviderName:     providerName,
 				SessionDir:       sessDir,
 				LastPatchError:   lastPatchError,
 				ForceIncludeFile: forceIncludeFile,
