@@ -19,12 +19,14 @@ go build -o atlas ./cmd/atlas
 Atlas uses an LLM (by default Anthropic Claude) to auto-fix build errors. Set the key for your chosen provider:
 
 **Using the CLI (Secure Credential Store):**
+
 ```bash
 # Example: Store your Mistral key securely
 atlas models set mistral
 ```
 
 **Using Environment Variables:**
+
 ```bash
 # Example: Mistral
 export MISTRAL_API_KEY=your-key-here
@@ -41,7 +43,7 @@ echo 'MISTRAL_API_KEY=your-key-here' >> .env
 # Check your LLM API keys
 atlas models
 
-# Check your deploy provider credentials  
+# Check your deploy provider credentials
 atlas providers
 ```
 
@@ -70,6 +72,7 @@ atlas ./my-project --action deploy --provider render
 ```
 
 Atlas will:
+
 1. Check Vercel auth (prompt to install/login if needed)
 2. Detect your framework and build command
 3. Run the build
@@ -80,39 +83,51 @@ Atlas will:
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `atlas <path> --action deploy --provider <name>` | Full deploy pipeline |
-| `atlas providers` | Check deploy provider auth status |
-| `atlas models` | Check LLM API key status |
-| `atlas testllm <path>` | Verify LLM key with a live ping |
-| `atlas debug run-command <path> -- <cmd>` | Run a command in a workspace |
+| Command                                          | Description                       |
+| ------------------------------------------------ | --------------------------------- |
+| `atlas <path> --action deploy --provider <name>` | Full deploy pipeline              |
+| `atlas providers`                                | Check deploy provider auth status |
+| `atlas models`                                   | Check LLM API key status          |
+| `atlas testllm <path>`                           | Verify LLM key with a live ping   |
+| `atlas debug run-command <path> -- <cmd>`        | Run a command in a workspace      |
 
 See [`docs/COMMANDS.md`](docs/COMMANDS.md) for full documentation with example output.
 
 ---
 
+## Supported Frameworks
+
+| Framework | Status        |
+| --------- | ------------- |
+| NextJS    | ✓ Implemented |
+| React     | ✓ Implemented |
+| Vite      | ✓ Implemented |
+| Express   | ✓ Implemented |
+| Django    | Planned       |
+
 ## Supported Providers
 
 ### Deploy
-| Provider | Status |
-|----------|--------|
-| Vercel | ✓ Implemented |
-| Render | Planned |
-| Netlify | Planned |
-| Fly.io | Planned |
-| Railway | Planned |
+
+| Provider | Status        |
+| -------- | ------------- |
+| Vercel   | ✓ Implemented |
+| Render   | ✓ Implemented |
+| Netlify  | ✓ Implemented |
+| Fly.io   | Planned       |
+| Railway  | Planned       |
 
 ### LLM
-| Provider | Env var |
-|----------|---------|
-| Anthropic | `ANTHROPIC_API_KEY` |
-| OpenAI | `OPENAI_API_KEY` |
-| Gemini | `GEMINI_API_KEY` |
-| Mistral | `MISTRAL_API_KEY` |
-| Groq | `GROQ_API_KEY` |
-| xAI (Grok) | `XAI_API_KEY` |
-| Local (Ollama) | No key needed |
+
+| Provider       | Env var             |
+| -------------- | ------------------- |
+| Anthropic      | `ANTHROPIC_API_KEY` |
+| OpenAI         | `OPENAI_API_KEY`    |
+| Gemini         | `GEMINI_API_KEY`    |
+| Mistral        | `MISTRAL_API_KEY`   |
+| Groq           | `GROQ_API_KEY`      |
+| xAI (Grok)     | `XAI_API_KEY`       |
+| Local (Ollama) | No key needed       |
 
 ---
 
