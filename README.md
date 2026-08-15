@@ -1,6 +1,6 @@
 # Atlas
 
-**Atlas** is an autonomous deployment agent — a CLI tool that analyzes your project, runs the build, uses an LLM to auto-fix build errors, and deploys to a cloud provider, all in one command.
+**Atlas** is an autonomous deployment pipeline — a CLI tool that analyzes your project, runs the build, uses an LLM to auto-fix build errors, and deploys to a cloud provider, all in one command.
 
 ---
 
