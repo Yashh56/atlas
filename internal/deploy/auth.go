@@ -135,16 +135,6 @@ func EnsureCLIAuthFull(
 		return nil
 	}
 
-	// 3. Check for a CLI session credential in store.
-	if store != nil {
-		if meta, ok, err := store.GetMeta(opts.ProviderName); err == nil && ok {
-			if meta.Method == credentials.MethodCLISession {
-				fmt.Fprintf(stdout, "%s %s authenticated (cli_session, %s)\n", cliutil.IconSuccess, titleName, meta.Account)
-				return nil
-			}
-		}
-	}
-
 	fmt.Fprintf(stdout, "%s Checking %s authentication...\n", cliutil.IconArrow, titleName)
 
 	// Run whoami to check if already logged in.

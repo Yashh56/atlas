@@ -707,11 +707,11 @@ func executeDeploy(
 
 	store, _ := credentials.Open()
 	var token string
-	if store != nil {
-		token, _ = store.GetSecret(providerName)
-	}
-	if token == "" {
-		token = os.Getenv(strings.ToUpper(providerName) + "_TOKEN")
+	token = os.Getenv(strings.ToUpper(providerName) + "_TOKEN")
+	if token == "" && store != nil {
+		if meta, ok, _ := store.GetMeta(providerName); ok && meta.Method == credentials.MethodStoredToken {
+			token, _ = store.GetSecret(providerName)
+		}
 	}
 
 	deployInput := deploy.DeployInput{
