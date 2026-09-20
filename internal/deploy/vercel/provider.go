@@ -36,7 +36,7 @@ func (v *VercelProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 	}
 
 	if !res.Success {
-		return nil, fmt.Errorf("vercel deploy failed: %s\nOutput:\n%s", res.Error, res.Output)
+		return nil, fmt.Errorf("vercel deploy failed (code: %s):\n%s", res.Error, res.Output)
 	}
 
 	url, err := parseVercelURL(res.Output)

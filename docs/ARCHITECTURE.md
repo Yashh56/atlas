@@ -1,6 +1,6 @@
 # Atlas Architecture
 
-Atlas is an autonomous deployment agent — a Go CLI that takes a project directory, runs the analysis → build → fix → deploy pipeline, and manages credentials and LLM calls along the way.
+Atlas is an autonomous deployment pipeline — a Go CLI that takes a project directory, runs the analysis → build → fix → deploy pipeline, and manages credentials and LLM calls along the way.
 
 ---
 
