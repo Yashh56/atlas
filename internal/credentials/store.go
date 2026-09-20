@@ -118,6 +118,16 @@ func (s *Store) SetMeta(cred ProviderCredential) error {
 	return s.writeAllMeta(all)
 }
 
+// DeleteMeta removes the metadata for a provider.
+func (s *Store) DeleteMeta(provider string) error {
+	all, err := s.readAllMeta()
+	if err != nil {
+		return err
+	}
+	delete(all, provider)
+	return s.writeAllMeta(all)
+}
+
 func (s *Store) readAllMeta() (map[string]ProviderCredential, error) {
 	data, err := os.ReadFile(s.metaPath())
 	if err != nil {
