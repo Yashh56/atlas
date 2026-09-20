@@ -589,6 +589,28 @@ func (r *RenderProvider) createService(ctx context.Context, token, ownerID, remo
 		}
 	}
 
+	filterPaths := []string{
+		"src/**",
+		"public/**",
+		"package.json",
+		"package-lock.json",
+		"vite.config.js",
+	}
+	if framework == "django" || framework == "python" || framework == "flask" || framework == "fastapi" {
+		filterPaths = []string{
+			"**/*.py",
+			"requirements.txt",
+			"build.sh",
+			"manage.py",
+		}
+	} else if framework == "go" {
+		filterPaths = []string{
+			"**/*.go",
+			"go.mod",
+			"go.sum",
+		}
+	}
+
 	// Payload for POST /v1/services
 	payload := map[string]interface{}{
 		"type":    serviceType,
@@ -598,13 +620,7 @@ func (r *RenderProvider) createService(ctx context.Context, token, ownerID, remo
 		"branch":  branch,
 		"rootDir": rootDir,
 		"buildFilter": map[string]interface{}{
-			"paths": []string{
-				"src/**",
-				"public/**",
-				"package.json",
-				"package-lock.json",
-				"vite.config.js",
-			},
+			"paths": filterPaths,
 			"ignoredPaths": []string{
 				"README.md",
 				".gitignore",

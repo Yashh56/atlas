@@ -90,7 +90,7 @@ func (r RunBuildCommand) Execute(ctx context.Context, s *session.Session) (ToolR
 		}, nil
 	}
 
-	if r.Framework == "python" || r.Framework == "django" || r.Framework == "fastapi" || r.Framework == "flask" {
+	if (r.Framework == "python" || r.Framework == "django" || r.Framework == "fastapi" || r.Framework == "flask") && cmdBin == "python" {
 		cmdBin = build.ResolvePythonBinary(r.WorkspaceRoot, cmdBin)
 	}
 

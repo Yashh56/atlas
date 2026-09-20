@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Yashh56/atlas/internal/cliutil"
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/orchestrator"
 	"github.com/Yashh56/atlas/internal/workspace"
-	"github.com/Yashh56/atlas/internal/cliutil"
 )
 
 var providersCmd = &cobra.Command{
@@ -160,8 +160,9 @@ func runProvidersUnset(_ *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Always clear the secret (ignoring errors if it wasn't a StoredToken)
-	_ = store.DeleteSecret(provider)
+	if err := store.DeleteSecret(provider); err != nil {
+		return fmt.Errorf("deleting secret: %w", err)
+	}
 
 	if err := store.DeleteMeta(provider); err != nil {
 		return fmt.Errorf("deleting metadata: %w", err)

@@ -447,12 +447,24 @@ func executeBuildLoop(
 		if _, err := os.Stat(filepath.Join(ws.Root, ".venv")); os.IsNotExist(err) {
 			fmt.Printf("%s Creating Python virtual environment (.venv)...\n", styleArrow)
 			pyCmd := build.ResolvePythonBinary(ws.Root, "python")
-			tools.RunCommand{Command: pyCmd, Args: []string{"-m", "venv", ".venv"}, Dir: ws.Root}.Execute(ctx, sess)
+			res, err := tools.RunCommand{Command: pyCmd, Args: []string{"-m", "venv", ".venv"}, Dir: ws.Root}.Execute(ctx, sess)
+			if err != nil {
+				return fmt.Errorf("failed to execute virtual environment creation: %v", err)
+			}
+			if !res.Success {
+				return fmt.Errorf("failed to create python virtual environment: %s", res.Error)
+			}
 		}
 
 		pythonCmd := build.ResolvePythonBinary(ws.Root, "python")
 		fmt.Printf("%s Installing dependencies (python -m pip install -r requirements.txt)...\n", styleArrow)
-		tools.RunCommand{Command: pythonCmd, Args: []string{"-m", "pip", "install", "-r", "requirements.txt"}, Dir: ws.Root}.Execute(ctx, sess)
+		res, err := tools.RunCommand{Command: pythonCmd, Args: []string{"-m", "pip", "install", "-r", "requirements.txt"}, Dir: ws.Root}.Execute(ctx, sess)
+		if err != nil {
+			return fmt.Errorf("failed to execute dependency installation: %v", err)
+		}
+		if !res.Success {
+			return fmt.Errorf("failed to install python dependencies: %s", res.Error)
+		}
 	}
 
 	for {

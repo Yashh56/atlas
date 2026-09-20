@@ -60,10 +60,12 @@ func (v ValidateDjangoBuild) Execute(ctx context.Context, s *session.Session) (T
 
 	// Paths inside the venv
 	binDir := "bin"
+	pythonName := "python"
 	if runtime.GOOS == "windows" {
 		binDir = "Scripts"
+		pythonName = "python.exe"
 	}
-	pythonBin := filepath.Join(v.VenvPath, binDir, "python")
+	pythonBin := filepath.Join(v.VenvPath, binDir, pythonName)
 
 	// 2. Install requirements
 	installCmd := exec.CommandContext(ctx, pythonBin, "-m", "pip", "install", "-r", "requirements.txt")
@@ -85,14 +87,14 @@ func (v ValidateDjangoBuild) Execute(ctx context.Context, s *session.Session) (T
 			Duration: time.Since(start),
 		}, nil
 	}
-	
+
 	// 3. Run manage.py check
 	checkCmd := exec.CommandContext(ctx, pythonBin, "manage.py", "check")
 	checkCmd.Dir = v.WorkspaceRoot
 	output, err := checkCmd.CombinedOutput()
-	
+
 	_ = os.WriteFile(logPath, output, 0o644)
-	
+
 	exitCode := 0
 	if err != nil {
 		exitCode = 1
