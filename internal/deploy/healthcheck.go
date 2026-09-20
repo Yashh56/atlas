@@ -14,7 +14,7 @@ func HTTPHealthCheck(ctx context.Context, url string, expectedStatus int) error 
 	if url == "" {
 		return fmt.Errorf("healthcheck: URL is empty")
 	}
-	
+
 	// Add http prefix if missing (shouldn't be, but safe)
 	if len(url) < 4 || url[:4] != "http" {
 		url = "https://" + url
@@ -30,17 +30,21 @@ func HTTPHealthCheck(ctx context.Context, url string, expectedStatus int) error 
 		}
 
 		resp, err := http.DefaultClient.Do(req)
-		
+
 		// If network error or context canceled, evaluate if we can retry
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			// Wait and retry
-			time.Sleep(baseBackoff * time.Duration(i+1))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(baseBackoff * time.Duration(i+1)):
+			}
 			continue
 		}
-		
+
 		defer resp.Body.Close()
 
 		if resp.StatusCode == expectedStatus {
@@ -49,7 +53,11 @@ func HTTPHealthCheck(ctx context.Context, url string, expectedStatus int) error 
 
 		// 5xx errors or 404 Not Found often recover during cold starts/propagation, wait and retry.
 		if (resp.StatusCode >= 500 && resp.StatusCode < 600) || resp.StatusCode == 404 {
-			time.Sleep(baseBackoff * time.Duration(i+1))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(baseBackoff * time.Duration(i+1)):
+			}
 			continue
 		}
 
