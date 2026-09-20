@@ -33,7 +33,8 @@ func TestResolveBuildCommand(t *testing.T) {
 		{"rust", "", "", nil, true},
 		{"", "", "", nil, false},
 		{"unknown", "", "", nil, false},
-		{"python", "pip", "", nil, true},
+		{"python", "pip", "python", []string{"-m", "compileall", "."}, false},
+		{"django", "pip", "python", []string{"manage.py", "check"}, false},
 	}
 
 	for _, tc := range cases {
@@ -92,7 +93,8 @@ func TestResolveTestCommand(t *testing.T) {
 		{"rust", "", "", nil, true},
 		{"", "", "", nil, false},
 		{"unknown", "", "", nil, false},
-		{"python", "pip", "", nil, true},
+		{"python", "pip", "pytest", nil, false},
+		{"django", "pip", "python", []string{"manage.py", "test"}, false},
 	}
 
 	for _, tc := range cases {
