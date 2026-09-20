@@ -2,7 +2,6 @@ package render
 
 import (
 	"bytes"
-	"os/exec"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -11,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -114,7 +114,7 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 				if saveErr := state.SaveJSON(filepath.Join(in.WorkspaceRoot, ".atlas"), "project.json", &proj); saveErr != nil {
 					fmt.Printf("Warning: failed to save Render Database ID to project.json: %v\n", saveErr)
 				}
-				
+
 				connStr, err := r.getDatabaseConnectionInfo(ctx, token, *proj.RenderDatabaseID)
 				if err != nil {
 					return nil, fmt.Errorf("render deploy: failed to get database connection info: %w", err)
@@ -288,20 +288,20 @@ func (r *RenderProvider) fetchServiceURL(ctx context.Context, serviceID, token, 
 			ServiceDetails map[string]interface{} `json:"serviceDetails"`
 		} `json:"service"`
 	}
-	
+
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	if err := json.Unmarshal(bodyBytes, &serviceResp); err != nil {
 		return nil, fmt.Errorf("render deploy: decoding service details: %w", err)
 	}
 
 	url := ""
-	
+
 	// Check if wrapped in "service"
 	details := serviceResp.ServiceDetails
 	if serviceResp.Service != nil && serviceResp.Service.ServiceDetails != nil {
 		details = serviceResp.Service.ServiceDetails
 	}
-	
+
 	if u, exists := details["url"].(string); exists && u != "" {
 		url = u
 	} else {
@@ -319,8 +319,6 @@ func (r *RenderProvider) fetchServiceURL(ctx context.Context, serviceID, token, 
 	if url == "" {
 		return nil, fmt.Errorf("render deploy: could not find URL in service details. Response was: %s", string(bodyBytes))
 	}
-
-
 
 	return &deploy.Deployment{
 		URL:         url,
@@ -358,7 +356,7 @@ func (r *RenderProvider) Rollback(ctx context.Context, to *deploy.Deployment, in
 	}
 
 	payload := map[string]string{
-		"commitId": to.ProviderRef,
+		"commitId":   to.ProviderRef,
 		"clearCache": "do_not_clear",
 	}
 
@@ -539,7 +537,7 @@ func (r *RenderProvider) createService(ctx context.Context, token, ownerID, remo
 		for _, arg := range args {
 			buildStr += " " + arg
 		}
-		
+
 		if cmd == "go" {
 			buildCommand = "go build -o app"
 		} else {
@@ -547,7 +545,7 @@ func (r *RenderProvider) createService(ctx context.Context, token, ownerID, remo
 			buildCommand = fmt.Sprintf("%s install && %s", packageManager, buildStr)
 		}
 	}
-	
+
 	if framework == "django" {
 		buildCommand = "./build.sh"
 	}
@@ -641,14 +639,14 @@ func (r *RenderProvider) createService(ctx context.Context, token, ownerID, remo
 		serviceDetails["pullRequestPreviewsEnabled"] = "no"
 		serviceDetails["previews"] = map[string]string{"generation": "off"}
 		serviceDetails["plan"] = "free"
-		
+
 		env := "node"
 		if framework == "go" {
 			env = "go"
 		} else if framework == "django" {
 			env = "python"
 		}
-		
+
 		serviceDetails["runtime"] = env
 		serviceDetails["env"] = env
 		serviceDetails["envSpecificDetails"] = map[string]string{
@@ -692,10 +690,10 @@ func (r *RenderProvider) createService(ctx context.Context, token, ownerID, remo
 					},
 				}, envVars...)
 			}
-			payload["envVars"] = envVars
+			serviceDetails["envVars"] = envVars
 		}
 	}
-	
+
 	payload["serviceDetails"] = serviceDetails
 
 	bodyData, _ := json.Marshal(payload)
@@ -733,115 +731,115 @@ func (r *RenderProvider) createService(ctx context.Context, token, ownerID, remo
 	return createResult.Service.ID, nil
 }
 
-	func (r *RenderProvider) createDatabase(ctx context.Context, token, ownerID, workspaceRoot string) (string, error) {
-		baseURL := r.BaseURL
-		if baseURL == "" {
-			baseURL = "https://api.render.com"
-		}
-	
-		repoName := filepath.Base(workspaceRoot)
-		if repoName == "" || repoName == "." {
-			repoName = "atlas"
-		}
+func (r *RenderProvider) createDatabase(ctx context.Context, token, ownerID, workspaceRoot string) (string, error) {
+	baseURL := r.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.render.com"
+	}
 
-		randBytes := make([]byte, 3)
-		rand.Read(randBytes)
-		dbName := repoName + "-db-" + hex.EncodeToString(randBytes)
-	
-		payload := map[string]interface{}{
-			"name":    dbName,
-			"ownerId": ownerID,
-			"plan":    "free",
-			"version": "16",
-		}
-	
-		bodyData, _ := json.Marshal(payload)
-		reqCreate, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1/postgres", bytes.NewReader(bodyData))
-		if err != nil {
-			return "", err
-		}
-		reqCreate.Header.Set("Authorization", "Bearer "+token)
-		reqCreate.Header.Set("Content-Type", "application/json")
-		reqCreate.Header.Set("Accept", "application/json")
-	
-		respCreate, err := http.DefaultClient.Do(reqCreate)
-		if err != nil {
-			return "", err
-		}
-		defer respCreate.Body.Close()
-	
-		if respCreate.StatusCode >= 400 {
-			bodyBytes, _ := io.ReadAll(respCreate.Body)
-			return "", fmt.Errorf("failed to create database (status %d): %s", respCreate.StatusCode, string(bodyBytes))
-		}
-	
-		var createResult struct {
-			ID string "json:\"id\""
-		}
-		if err := json.NewDecoder(respCreate.Body).Decode(&createResult); err != nil {
-			return "", err
-		}
-		if createResult.ID == "" {
-			return "", fmt.Errorf("no database ID returned from Render API")
-		}
-	
-		return createResult.ID, nil
+	repoName := filepath.Base(workspaceRoot)
+	if repoName == "" || repoName == "." {
+		repoName = "atlas"
 	}
-	
-	func (r *RenderProvider) getDatabaseConnectionInfo(ctx context.Context, token, dbID string) (string, error) {
-		baseURL := r.BaseURL
-		if baseURL == "" {
-			baseURL = "https://api.render.com"
-		}
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/postgres/%s/connection-info", baseURL, dbID), nil)
-		if err != nil {
-			return "", err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Accept", "application/json")
-	
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return "", err
-		}
-		defer resp.Body.Close()
-	
-		if resp.StatusCode >= 400 {
-			return "", fmt.Errorf("failed to fetch database connection info (status %d)", resp.StatusCode)
-		}
-	
-		var info struct {
-			InternalConnectionString string "json:\"internalConnectionString\""
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-			return "", err
-		}
-		return info.InternalConnectionString, nil
+
+	randBytes := make([]byte, 3)
+	rand.Read(randBytes)
+	dbName := repoName + "-db-" + hex.EncodeToString(randBytes)
+
+	payload := map[string]interface{}{
+		"name":    dbName,
+		"ownerId": ownerID,
+		"plan":    "free",
+		"version": "16",
 	}
-	
-	func (r *RenderProvider) checkServiceExists(ctx context.Context, token, serviceID string) error {
-		baseURL := r.BaseURL
-		if baseURL == "" {
-			baseURL = "https://api.render.com"
-		}
-		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/services/%s", baseURL, serviceID), nil)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Accept", "application/json")
-	
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-	
-		if resp.StatusCode == 404 {
-			return fmt.Errorf("status 404")
-		}
-		if resp.StatusCode >= 400 {
-			return fmt.Errorf("status %d", resp.StatusCode)
-		}
-		return nil
+
+	bodyData, _ := json.Marshal(payload)
+	reqCreate, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1/postgres", bytes.NewReader(bodyData))
+	if err != nil {
+		return "", err
 	}
+	reqCreate.Header.Set("Authorization", "Bearer "+token)
+	reqCreate.Header.Set("Content-Type", "application/json")
+	reqCreate.Header.Set("Accept", "application/json")
+
+	respCreate, err := http.DefaultClient.Do(reqCreate)
+	if err != nil {
+		return "", err
+	}
+	defer respCreate.Body.Close()
+
+	if respCreate.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(respCreate.Body)
+		return "", fmt.Errorf("failed to create database (status %d): %s", respCreate.StatusCode, string(bodyBytes))
+	}
+
+	var createResult struct {
+		ID string "json:\"id\""
+	}
+	if err := json.NewDecoder(respCreate.Body).Decode(&createResult); err != nil {
+		return "", err
+	}
+	if createResult.ID == "" {
+		return "", fmt.Errorf("no database ID returned from Render API")
+	}
+
+	return createResult.ID, nil
+}
+
+func (r *RenderProvider) getDatabaseConnectionInfo(ctx context.Context, token, dbID string) (string, error) {
+	baseURL := r.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.render.com"
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/postgres/%s/connection-info", baseURL, dbID), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("failed to fetch database connection info (status %d)", resp.StatusCode)
+	}
+
+	var info struct {
+		InternalConnectionString string "json:\"internalConnectionString\""
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "", err
+	}
+	return info.InternalConnectionString, nil
+}
+
+func (r *RenderProvider) checkServiceExists(ctx context.Context, token, serviceID string) error {
+	baseURL := r.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.render.com"
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/services/%s", baseURL, serviceID), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		return fmt.Errorf("status 404")
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
+}

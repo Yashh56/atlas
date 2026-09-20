@@ -64,12 +64,19 @@ func (c CheckDjango) Execute(ctx context.Context, s *session.Session) (ToolResul
 			}
 		}
 
-		requiredPkgs := []string{"gunicorn", "uvicorn", "whitenoise"}
+		hasGunicorn, _ := regexp.MatchString(`(?m)^gunicorn([>=<~].*)?$`, reqContent)
+		hasUvicorn, _ := regexp.MatchString(`(?m)^uvicorn([>=<~].*)?$`, reqContent)
+		
+		var missing []string
+		if !hasGunicorn && !hasUvicorn {
+			missing = append(missing, "gunicorn (or uvicorn)")
+		}
+
+		requiredPkgs := []string{"whitenoise"}
 		if requiresDatabase {
 			requiredPkgs = append(requiredPkgs, "dj-database-url")
 		}
 
-		var missing []string
 		for _, pkg := range requiredPkgs {
 			matched, _ := regexp.MatchString(`(?m)^`+pkg+`([>=<~].*)?$`, reqContent)
 			if !matched {

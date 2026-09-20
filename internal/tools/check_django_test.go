@@ -29,7 +29,7 @@ func TestCheckDjango_Incomplete(t *testing.T) {
 	// the SQLite-ephemeral-disk message (not "dj_database_url not found").
 	failures := []string{
 		"Missing required packages in requirements.txt",
-		"gunicorn, uvicorn, whitenoise, dj-database-url",
+		"gunicorn (or uvicorn), whitenoise, dj-database-url",
 		"WhiteNoiseMiddleware not found",
 		"still using SQLite",
 		"SECRET_KEY must be read from environment variables",
