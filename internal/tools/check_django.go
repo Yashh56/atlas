@@ -92,33 +92,35 @@ func (c CheckDjango) Execute(ctx context.Context, s *session.Session) (ToolResul
 		}
 	}
 
-	// 3: settings.py checks — only enforced for Render deploys
+	// 3: settings.py checks — enforced for Render and Vercel deploys
 	matches, _ := filepath.Glob(filepath.Join(c.WorkspaceRoot, "*", "settings.py"))
 	if len(matches) == 0 {
 		failures = append(failures, "Could not locate settings.py in any subdirectory.")
 	} else if len(matches) > 1 {
 		failures = append(failures, "Found multiple settings.py files. Cannot uniquely identify the Django module.")
-	} else if c.IsDeploy && c.ProviderName == "render" {
+	} else if c.IsDeploy && (c.ProviderName == "render" || c.ProviderName == "vercel") {
 		settingsPath := matches[0]
 		b, _ := os.ReadFile(settingsPath)
 		settingsContent := string(b)
 
-		// 4: WhiteNoiseMiddleware
-		if !strings.Contains(settingsContent, "WhiteNoiseMiddleware") {
+		// 4: WhiteNoiseMiddleware (only required for Render)
+		if c.ProviderName == "render" && !strings.Contains(settingsContent, "WhiteNoiseMiddleware") {
 			failures = append(failures, "WhiteNoiseMiddleware not found in MIDDLEWARE. Add 'whitenoise.middleware.WhiteNoiseMiddleware' to MIDDLEWARE in settings.py.")
 		}
 
 		// 5: Database discriminator — only check DB config if the project actually uses a DB
 		if djangoUsesDatabase(settingsContent) {
 			if !strings.Contains(settingsContent, "dj_database_url") {
+				providerNameStr := "Render"
+				if c.ProviderName == "vercel" {
+					providerNameStr = "Vercel"
+				}
 				failures = append(failures,
-					"This project is still using SQLite. Render's disks are ephemeral — anything written to a SQLite "+
+					fmt.Sprintf("This project is still using SQLite. %s's disks are ephemeral — anything written to a SQLite "+
 						"file is lost on the next deploy or restart. Configure PostgreSQL via dj-database-url before "+
-						"deploying: see https://render.com/docs/deploy-django#postgresql-database")
+						"deploying.", providerNameStr))
 			}
-			// else: dj_database_url present → passes
 		}
-		// else: project has no DB-requiring apps → skip DB check entirely
 
 		// 6: SECRET_KEY
 		if !regexp.MustCompile(`SECRET_KEY\s*=\s*(os\.environ|os\.getenv)`).MatchString(settingsContent) {
@@ -127,15 +129,25 @@ func (c CheckDjango) Execute(ctx context.Context, s *session.Session) (ToolResul
 
 		// 7: DEBUG — must be env-controlled, not hardcoded True
 		if !regexp.MustCompile(`DEBUG\s*=\s*(os\.environ|os\.getenv)`).MatchString(settingsContent) {
+			envVarExample := "RENDER"
+			if c.ProviderName == "vercel" {
+				envVarExample = "VERCEL"
+			}
 			failures = append(failures,
-				"DEBUG is hardcoded to True (or not env-controlled) in settings.py — this exposes stack traces and "+
+				fmt.Sprintf("DEBUG is hardcoded to True (or not env-controlled) in settings.py — this exposes stack traces and "+
 					"environment details in production. Set it from an env var, e.g.:\n"+
-					"  DEBUG = os.environ.get('RENDER') is None")
+					"  DEBUG = os.environ.get('%s') is None", envVarExample))
 		}
 
 		// 8: ALLOWED_HOSTS
-		if !strings.Contains(settingsContent, "RENDER_EXTERNAL_HOSTNAME") {
-			failures = append(failures, "ALLOWED_HOSTS does not seem to include RENDER_EXTERNAL_HOSTNAME. Add os.environ.get('RENDER_EXTERNAL_HOSTNAME') to ALLOWED_HOSTS.")
+		if c.ProviderName == "render" {
+			if !strings.Contains(settingsContent, "RENDER_EXTERNAL_HOSTNAME") {
+				failures = append(failures, "ALLOWED_HOSTS does not seem to include RENDER_EXTERNAL_HOSTNAME. Add os.environ.get('RENDER_EXTERNAL_HOSTNAME') to ALLOWED_HOSTS.")
+			}
+		} else if c.ProviderName == "vercel" {
+			if !strings.Contains(settingsContent, "VERCEL_URL") && !strings.Contains(settingsContent, "VERCEL_PROJECT_PRODUCTION_URL") {
+				failures = append(failures, "ALLOWED_HOSTS does not seem to include VERCEL_URL. Add os.environ.get('VERCEL_URL') to ALLOWED_HOSTS.")
+			}
 		}
 
 		// 8.1: STATIC_ROOT

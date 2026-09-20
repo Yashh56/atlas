@@ -114,7 +114,7 @@ func TestCheckDjango_NoRoot(t *testing.T) {
 }
 
 func TestCheckDjango_MissingUrls(t *testing.T) {
-	wsRoot, _ := filepath.Abs("../../fixtures/django-missing-urls") 
+	wsRoot, _ := filepath.Abs("../../fixtures/django-missing-urls")
 	chk := tools.CheckDjango{WorkspaceRoot: wsRoot, IsDeploy: true, ProviderName: "render"}
 	sess := session.New(wsRoot)
 
@@ -127,5 +127,41 @@ func TestCheckDjango_MissingUrls(t *testing.T) {
 		t.Error("Expected failure for missing urls.py, but it passed")
 	} else if !strings.Contains(res.Error, "urls.py not found next to settings.py") {
 		t.Errorf("Expected 'urls.py not found' error, got:\n%s", res.Error)
+	}
+}
+
+func TestCheckDjango_Vercel(t *testing.T) {
+	wsRoot, _ := filepath.Abs("../../fixtures/django-incomplete")
+	chk := tools.CheckDjango{WorkspaceRoot: wsRoot, IsDeploy: true, ProviderName: "vercel"}
+	sess := session.New(wsRoot)
+
+	res, err := chk.Execute(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if res.Success {
+		t.Fatalf("expected check to fail, but it succeeded")
+	}
+
+	failures := []string{
+		"still using SQLite. Vercel's disks are ephemeral",
+		"DEBUG = os.environ.get('VERCEL') is None",
+		"ALLOWED_HOSTS does not seem to include VERCEL_URL",
+		"STATIC_ROOT is not configured",
+	}
+
+	for _, f := range failures {
+		if !strings.Contains(res.Error, f) {
+			t.Errorf("expected error to contain %q, got: %s", f, res.Error)
+		}
+	}
+
+	// Vercel should NOT require WhiteNoise or build.sh
+	if strings.Contains(res.Error, "WhiteNoiseMiddleware not found") {
+		t.Errorf("expected Vercel check to SKIP WhiteNoise requirement, but got it")
+	}
+	if strings.Contains(res.Error, "build.sh not found") {
+		t.Errorf("expected Vercel check to SKIP build.sh requirement, but got it")
 	}
 }

@@ -36,7 +36,7 @@ func (v *VercelProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 	}
 
 	if !res.Success {
-		return nil, fmt.Errorf("vercel deploy failed: %s", res.Error)
+		return nil, fmt.Errorf("vercel deploy failed: %s\nOutput:\n%s", res.Error, res.Output)
 	}
 
 	url, err := parseVercelURL(res.Output)
@@ -45,10 +45,10 @@ func (v *VercelProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 	}
 
 	return &deploy.Deployment{
-		URL:        url,
-		Provider:   "vercel",
+		URL:         url,
+		Provider:    "vercel",
 		ProviderRef: url,
-		DeployedAt: time.Now().UTC(),
+		DeployedAt:  time.Now().UTC(),
 	}, nil
 }
 
@@ -67,13 +67,13 @@ func (v *VercelProvider) Rollback(ctx context.Context, to *deploy.Deployment, in
 		Args:    args,
 		Dir:     in.WorkspaceRoot,
 	}
-	
+
 	res, err := cmdTool.Execute(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("vercel rollback execution failed: %w", err)
 	}
 	if !res.Success {
-		return fmt.Errorf("vercel rollback failed: %s", res.Error)
+		return fmt.Errorf("vercel rollback failed: %s\nOutput:\n%s", res.Error, res.Output)
 	}
 	return nil
 }
@@ -84,7 +84,7 @@ func parseVercelURL(output string) (string, error) {
 	// Simple regex to find the vercel app URL in the output.
 	re := regexp.MustCompile(`(https://[a-zA-Z0-9\-\.]+\.vercel\.app)`)
 	matches := re.FindAllStringSubmatch(output, -1)
-	
+
 	if len(matches) > 0 {
 		// Vercel usually prints the prod URL last
 		return matches[len(matches)-1][1], nil
