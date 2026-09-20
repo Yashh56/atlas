@@ -105,6 +105,36 @@ go 1.22
 			wantPM:        ptr("npm"),
 			wantDocker:    false,
 		},
+		{
+			name: "python django project",
+			setup: func(dir string) {
+				writeFixture(t, dir, "requirements.txt", "Django==4.2.0\npsycopg2-binary==2.9.3")
+			},
+			wantFramework: ptr("django"),
+			wantLanguage:  ptr("python"),
+			wantPM:        ptr("pip"),
+			wantDocker:    false,
+		},
+		{
+			name: "python fastapi project",
+			setup: func(dir string) {
+				writeFixture(t, dir, "requirements.txt", "fastapi==0.95.0\nuvicorn==0.21.1")
+			},
+			wantFramework: ptr("fastapi"),
+			wantLanguage:  ptr("python"),
+			wantPM:        ptr("pip"),
+			wantDocker:    false,
+		},
+		{
+			name: "basic python project",
+			setup: func(dir string) {
+				writeFixture(t, dir, "requirements.txt", "requests==2.28.1")
+			},
+			wantFramework: ptr("python"),
+			wantLanguage:  ptr("python"),
+			wantPM:        ptr("pip"),
+			wantDocker:    false,
+		},
 	}
 
 	stub := &session.Session{}

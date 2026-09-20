@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Yashh56/atlas/internal/build"
 	"github.com/Yashh56/atlas/internal/cliutil"
 	"github.com/Yashh56/atlas/internal/config"
 	"github.com/Yashh56/atlas/internal/credentials"
@@ -256,6 +257,22 @@ func executeAnalyzeAndValidate(
 	if analyzeResult.Success {
 		fmt.Printf("%s\n", cliutil.FormatSuccess("Analysis", analyzeResult.Output))
 		planner.Completed = append(planner.Completed, "analyze_project")
+
+		// Fail closed on unsupported Python frameworks before proceeding
+		if proj, err := LoadProject(sessDir); err == nil && proj != nil {
+			framework := ""
+			if proj.Framework != nil {
+				framework = *proj.Framework
+			}
+			language := ""
+			if proj.Language != nil {
+				language = *proj.Language
+			}
+			var pythonFrameworksSupportedByRender = map[string]bool{"django": true}
+			if language == "python" && providerName == "render" && !pythonFrameworksSupportedByRender[framework] {
+				return nil, "", "", false, fmt.Errorf("Atlas can deploy Python only as Django on Render — %s is not supported yet", framework)
+			}
+		}
 	}
 
 	planner.CurrentStep = "git_validate"
@@ -397,6 +414,22 @@ func executeBuildLoop(
 	const maxLLMFixes = 30      // hard ceiling on LLM invocations regardless of build count
 	var lastPatchError string   // last patch-application error to pass to the next LLM call
 	var forceIncludeFile string // file most recently targeted by a fix; always included in next LLM prompt
+
+	// Django precondition checks: fail fast before loop
+	if framework == "django" {
+		chk := tools.CheckDjango{
+			WorkspaceRoot: ws.Root,
+			IsDeploy:      opts.Action.IsDeploy(),
+			ProviderName:  providerName,
+		}
+		if res, err := chk.Execute(ctx, sess); err != nil {
+			return err
+		} else if !res.Success {
+			fmt.Printf("\n%s\n", res.Error)
+			return fmt.Errorf("django preconditions failed")
+		}
+	}
+
 	// Install dependencies before starting the build loop
 	if framework == "go" {
 		fmt.Printf("%s Fetching dependencies (go mod tidy & download)...\n", styleArrow)
@@ -405,6 +438,21 @@ func executeBuildLoop(
 	} else if framework == "node" && packageManager != "" {
 		fmt.Printf("%s Installing dependencies (%s install)...\n", styleArrow, packageManager)
 		tools.RunCommand{Command: packageManager, Args: []string{"install"}, Dir: ws.Root}.Execute(ctx, sess)
+	} else if framework == "python" || framework == "django" || framework == "fastapi" || framework == "flask" {
+		reqPath := filepath.Join(ws.Root, "requirements.txt")
+		if _, err := os.Stat(reqPath); os.IsNotExist(err) {
+			return fmt.Errorf("No requirements.txt found. Activate your project's virtual environment and run: pip freeze > requirements.txt")
+		}
+
+		if _, err := os.Stat(filepath.Join(ws.Root, ".venv")); os.IsNotExist(err) {
+			fmt.Printf("%s Creating Python virtual environment (.venv)...\n", styleArrow)
+			pyCmd := build.ResolvePythonBinary(ws.Root, "python")
+			tools.RunCommand{Command: pyCmd, Args: []string{"-m", "venv", ".venv"}, Dir: ws.Root}.Execute(ctx, sess)
+		}
+
+		pythonCmd := build.ResolvePythonBinary(ws.Root, "python")
+		fmt.Printf("%s Installing dependencies (python -m pip install -r requirements.txt)...\n", styleArrow)
+		tools.RunCommand{Command: pythonCmd, Args: []string{"-m", "pip", "install", "-r", "requirements.txt"}, Dir: ws.Root}.Execute(ctx, sess)
 	}
 
 	for {
@@ -413,13 +461,25 @@ func executeBuildLoop(
 
 		spinner := cliutil.StartSpinner("Running build command...")
 
-		buildTool := tools.RunBuildCommand{
-			WorkspaceRoot:  ws.Root,
-			Framework:      framework,
-			PackageManager: packageManager,
-			SessionDir:     sessDir,
+		var buildResult tools.ToolResult
+		var err error
+
+		if framework == "django" {
+			valTool := tools.ValidateDjangoBuild{
+				WorkspaceRoot: ws.Root,
+				SessionDir:    sessDir,
+				VenvPath:      filepath.Join(sessDir, "ephemeral-venv"),
+			}
+			buildResult, err = valTool.Execute(ctx, sess)
+		} else {
+			buildTool := tools.RunBuildCommand{
+				WorkspaceRoot:  ws.Root,
+				Framework:      framework,
+				PackageManager: packageManager,
+				SessionDir:     sessDir,
+			}
+			buildResult, err = buildTool.Execute(ctx, sess)
 		}
-		buildResult, err := buildTool.Execute(ctx, sess)
 
 		spinner.Stop()
 
@@ -619,29 +679,15 @@ func executeBuildLoop(
 				break
 			}
 
-			// Patch failed to apply — record the error for the next LLM call and retry
-			// WITHOUT moving the build-attempt counter
-			isPatchFailure := strings.Contains(fixRes.Error, "old_str not found") ||
-				strings.Contains(fixRes.Error, "old_str cannot be empty") ||
-				strings.Contains(fixRes.Error, "LLM returned an empty old_str")
-
-			if isPatchFailure {
-				lastPatchError = fixRes.Error
-				// Keep forceIncludeFile pointing at the file the model tried to patch
-				// so it will see its actual current content on the next attempt
-				if fixRes.TargetFile != "" {
-					forceIncludeFile = fixRes.TargetFile
-				}
-				fmt.Printf("  Fix attempt failed (patch error, retrying LLM): %s\n\n", fixRes.Error)
-				continue
+			// Any fix failure (patch error, LLM error, missing JSON, etc.)
+			// should retry the LLM without moving the build-attempt counter
+			// since the codebase was not modified.
+			lastPatchError = fixRes.Error
+			if fixRes.TargetFile != "" {
+				forceIncludeFile = fixRes.TargetFile
 			}
-
-			// Other fix failure (LLM error, unknown file, etc.) — stop and rebuild to get a fresh error
-			lastPatchError = ""
-			fmt.Printf("  Fix attempt failed: %s\n\n", fixRes.Error)
-			planner.Failed = append(planner.Failed, "fix_code")
-			_ = SavePlanner(sessDir, planner)
-			break
+			fmt.Printf("  Fix attempt failed (retrying LLM): %s\n\n", fixRes.Error)
+			continue
 		}
 
 		fmt.Printf("%s Rebuilding...\n", styleArrow)
@@ -707,11 +753,11 @@ func executeDeploy(
 
 	store, _ := credentials.Open()
 	var token string
-	if store != nil {
-		token, _ = store.GetSecret(providerName)
-	}
-	if token == "" {
-		token = os.Getenv(strings.ToUpper(providerName) + "_TOKEN")
+	token = os.Getenv(strings.ToUpper(providerName) + "_TOKEN")
+	if token == "" && store != nil {
+		if meta, ok, _ := store.GetMeta(providerName); ok && meta.Method == credentials.MethodStoredToken {
+			token, _ = store.GetSecret(providerName)
+		}
 	}
 
 	deployInput := deploy.DeployInput{

@@ -59,6 +59,10 @@ func (r RunTests) Execute(ctx context.Context, s *session.Session) (ToolResult, 
 		}, nil
 	}
 
+	if r.Framework == "python" || r.Framework == "django" || r.Framework == "fastapi" || r.Framework == "flask" {
+		cmdBin = build.ResolvePythonBinary(r.WorkspaceRoot, cmdBin)
+	}
+
 	commandStr := cmdBin + " " + strings.Join(cmdArgs, " ")
 
 	// Prepare log file.

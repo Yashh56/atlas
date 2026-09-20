@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/cliutil"
+	"github.com/Yashh56/atlas/internal/credentials"
 )
 
 // EnsureProviderAuth checks for authentication via environment variable or stored token.
@@ -82,7 +82,6 @@ func EnsureCLIInstalled(
 		}
 		titleName := strings.Title(cliName)
 		fmt.Fprintf(stdout, "  %s CLI not found. Install it now? (%s) [y/N]\n", titleName, strings.Join(installCommand, " "))
-		
 		scanner := bufio.NewScanner(stdin)
 		scanner.Scan()
 		line := strings.TrimSpace(strings.ToLower(scanner.Text()))
@@ -135,16 +134,6 @@ func EnsureCLIAuthFull(
 		return nil
 	}
 
-	// 3. Check for a CLI session credential in store.
-	if store != nil {
-		if meta, ok, err := store.GetMeta(opts.ProviderName); err == nil && ok {
-			if meta.Method == credentials.MethodCLISession {
-				fmt.Fprintf(stdout, "%s %s authenticated (cli_session, %s)\n", cliutil.IconSuccess, titleName, meta.Account)
-				return nil
-			}
-		}
-	}
-
 	fmt.Fprintf(stdout, "%s Checking %s authentication...\n", cliutil.IconArrow, titleName)
 
 	// Run whoami to check if already logged in.
@@ -174,7 +163,7 @@ func EnsureCLIAuthFull(
 	accountRaw, whoamiErr = runner.Run(ctx, "", opts.CLIName, opts.WhoamiCommand...)
 	account, parseErr = opts.ParseAccount(accountRaw)
 	if whoamiErr != nil || parseErr != nil || account == "" {
-		return fmt.Errorf("%s login appeared to succeed but `%s %s` still fails — check your login and try again", 
+		return fmt.Errorf("%s login appeared to succeed but `%s %s` still fails — check your login and try again",
 			opts.CLIName, opts.CLIName, strings.Join(opts.WhoamiCommand, " "))
 	}
 
