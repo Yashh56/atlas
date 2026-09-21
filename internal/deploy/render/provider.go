@@ -77,6 +77,20 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 		return nil, fmt.Errorf("render deploy: %w", err)
 	}
 
+	var serviceID string
+	provisionNewService := false
+	if proj.RenderServiceID == nil || *proj.RenderServiceID == "" {
+		provisionNewService = true
+	} else {
+		err := r.checkServiceExists(ctx, token, *proj.RenderServiceID)
+		if err != nil && strings.Contains(err.Error(), "status 404") {
+			fmt.Printf("  %s Previous Render service not found, reprovisioning...\n", cliutil.IconWarning)
+			provisionNewService = true
+		} else {
+			serviceID = *proj.RenderServiceID
+		}
+	}
+
 	dbConnString := ""
 	if proj.Framework != nil && *proj.Framework == "django" {
 		// Only provision Postgres if the project actually uses a database.
@@ -105,6 +119,9 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 			}
 
 			if provisionNewDB {
+				if !provisionNewService {
+					return nil, fmt.Errorf("render deploy: existing service %s is missing its database connection. Please clear the service ID from project.json to reprovision, or add the database ID", serviceID)
+				}
 				fmt.Printf("  %s Provisioning Postgres database on Render...\n", cliutil.IconArrow)
 				dbID, err := r.createDatabase(ctx, token, ownerID, in.WorkspaceRoot)
 				if err != nil {
@@ -123,20 +140,6 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 			}
 		}
 		// else: no DB-requiring apps detected — skip provisioning entirely
-	}
-
-	var serviceID string
-	provisionNewService := false
-	if proj.RenderServiceID == nil || *proj.RenderServiceID == "" {
-		provisionNewService = true
-	} else {
-		err := r.checkServiceExists(ctx, token, *proj.RenderServiceID)
-		if err != nil && strings.Contains(err.Error(), "status 404") {
-			fmt.Printf("  %s Previous Render service not found, reprovisioning...\n", cliutil.IconWarning)
-			provisionNewService = true
-		} else {
-			serviceID = *proj.RenderServiceID
-		}
 	}
 
 	if provisionNewService {
@@ -562,7 +565,22 @@ func (r *RenderProvider) createService(ctx context.Context, token, ownerID, remo
 		if djangoModule != nil && *djangoModule != "" {
 			modName = *djangoModule
 		}
-		startCommand = fmt.Sprintf("python -m gunicorn %s.asgi:application -k uvicorn.workers.UvicornWorker", modName)
+
+		hasGunicorn := false
+		hasUvicorn := false
+		if reqBytes, err := os.ReadFile(filepath.Join(workspaceRoot, "requirements.txt")); err == nil {
+			reqContent := strings.ToLower(string(reqBytes))
+			hasGunicorn = strings.Contains(reqContent, "gunicorn")
+			hasUvicorn = strings.Contains(reqContent, "uvicorn")
+		}
+
+		if hasGunicorn && hasUvicorn {
+			startCommand = fmt.Sprintf("python -m gunicorn %s.asgi:application -k uvicorn.workers.UvicornWorker", modName)
+		} else if hasUvicorn {
+			startCommand = fmt.Sprintf("python -m uvicorn %s.asgi:application --host 0.0.0.0", modName)
+		} else {
+			startCommand = fmt.Sprintf("python -m gunicorn %s.wsgi:application", modName)
+		}
 	} else {
 		startCommand = fmt.Sprintf("%s start", packageManager)
 	}
@@ -774,7 +792,7 @@ func (r *RenderProvider) createDatabase(ctx context.Context, token, ownerID, wor
 	}
 
 	var createResult struct {
-		ID string "json:\"id\""
+		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(respCreate.Body).Decode(&createResult); err != nil {
 		return "", err
