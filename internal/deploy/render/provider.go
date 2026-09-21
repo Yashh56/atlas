@@ -827,7 +827,7 @@ func (r *RenderProvider) getDatabaseConnectionInfo(ctx context.Context, token, d
 	}
 
 	var info struct {
-		InternalConnectionString string "json:\"internalConnectionString\""
+		InternalConnectionString string `json:"internalConnectionString"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return "", err
