@@ -1,0 +1,43 @@
+---
+title: Next.js Guide
+description: Learn how to deploy and configure Next.js applications with Atlas.
+---
+
+# Next.js Deployment Guide
+
+This guide explains how to prepare your Next.js project for deployment using Atlas. Next.js applications are natively optimized for deployment to **Vercel**, though Atlas also supports deployment to **Netlify** and **Render**.
+
+## 1. Project Detection
+
+Atlas detects Next.js projects by locating `next` within your `package.json` dependencies. Atlas supports both the **App Router** (`app/`) and the **Pages Router** (`pages/`).
+
+## 2. Build and Start Scripts
+
+Atlas expects standard Next.js scripts to be present in your `package.json`:
+
+```json
+"scripts": {
+  "dev": "next dev",
+  "build": "next build",
+  "start": "next start",
+  "lint": "next lint"
+}
+```
+
+* For Server-Side Rendered (SSR) apps deployed to Render, Atlas will use the `start` script to boot your production server.
+* For deployments to Vercel and Netlify, Atlas leverages the native build pipelines of those platforms, seamlessly handing off the build configuration.
+
+## 3. Environment Variables
+
+Next.js separates environment variables into server-side (private) and client-side (public, prefixed with `NEXT_PUBLIC_`). 
+When deploying via Atlas interactively, you will be prompted to supply necessary environment variables if Atlas detects `.env.local` or `.env.example` files in your repository. Atlas injects these securely into the provider's configuration.
+
+## 4. Static Exports
+
+If you are using Next.js strictly as a Static Site Generator (SSG) by setting `output: 'export'` in your `next.config.js` or `next.config.mjs`, the build output will default to the `out/` directory instead of `.next/`.
+Atlas will automatically detect static exports when deploying to static hosting providers and configure the publish directory accordingly.
+
+## 5. Build Troubleshooting
+
+Next.js builds often fail during the static analysis phase due to ESLint or strict TypeScript checks (`tsc`). 
+If a Next.js build fails, Atlas's auto-fix engine will identify the exact file causing the linting or typing error, patch the file using LLM intelligence, and rebuild the project.

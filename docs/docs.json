@@ -1,0 +1,70 @@
+{
+  "$schema": "./node_modules/@umami/shiso/docs.schema.json",
+  "theme": "shiso",
+  "name": "Atlas",
+  "description": "Documentation for the Atlas autonomous deployment pipeline.",
+  "logo": "/logo.svg",
+  "favicon": "/logo.svg",
+  "pages": [
+    {
+      "path": "/",
+      "page": "home"
+    }
+  ],
+  "contextual": {
+    "options": ["copy", "view"]
+  },
+  "navbar": {
+    "links": [
+      {
+        "icon": "github",
+        "ariaLabel": "GitHub",
+        "href": "https://github.com/Yashh56/atlas"
+      }
+    ],
+    "primary": {
+      "label": "Get Started",
+      "icon": "rocket",
+      "href": "/getting-started"
+    }
+  },
+  "search": {
+    "prompt": "Search the docs...",
+    "provider":"pagefind",
+    "shortcut": "k",
+    "shortcutLabel": "Ctrl K"
+  
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting started",
+        "collapsible": false,
+        "pages": [
+          { "page": "index", "title": "Introduction" },
+          "getting-started",
+          "commands"
+        ]
+      },
+      {
+        "group": "Guides",
+        "collapsible": true,
+        "pages": ["react-guide", "nextjs-guide", "express-guide", "django-guide"]
+      },
+      {
+        "group": "Providers",
+        "collapsible": true,
+        "pages": [
+          { "page": "providers/netlify", "title": "Netlify" },
+          { "page": "providers/render", "title": "Render" },
+          { "page": "providers/vercel", "title": "Vercel" }
+        ]
+      },
+      {
+        "group": "Internals",
+        "collapsible": true,
+        "pages": ["architecture", "credentials-auth", "state-management"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "target": "es2022"
+  },
+  "include": [
+    "declarations.d.ts",
+    "entry-client.tsx"
+  ]
+}

@@ -1,0 +1,96 @@
+---
+title: Django Guide
+description: Learn how to deploy and configure Django applications with Atlas.
+---
+
+# Django Deployment Guide
+
+This guide explains how to prepare your Django project for deployment using Atlas. Atlas currently supports deploying Django applications to **Render** and **Vercel**.
+
+Atlas automatically performs strict pre-deployment static analysis on your Django project to ensure it is configured securely and correctly for production. If your project fails any of these checks, Atlas will block the deployment and provide actionable feedback.
+
+Follow this checklist to ensure your Django project is Atlas-ready.
+
+## 1. Directory Structure & `manage.py`
+Atlas determines that your project is a Django application by looking for a `manage.py` file in your repository. 
+* Your `manage.py` **must** be checked into version control.
+* If your `manage.py` is inside a subdirectory, Atlas will automatically detect it and configure the provider's Root Directory settings accordingly.
+
+## 2. Requirements File (`requirements.txt`)
+Your project must include a `requirements.txt` file listing all dependencies.
+* **Important (Windows Users):** If you generate this file in PowerShell using `pip freeze > requirements.txt`, ensure it is saved with **UTF-8 encoding**. Older versions of PowerShell default to UTF-16, which will cause deployment failures on Linux-based providers like Vercel and Render. Use `pip freeze | Out-File -Encoding utf8 requirements.txt` instead.
+
+## 3. Web Servers & Middleware
+You must include a production-ready web server in your `requirements.txt`:
+* **WSGI:** Install `gunicorn`.
+* **ASGI:** Install `uvicorn`.
+
+### Static Files (`STATIC_ROOT`)
+Regardless of the provider you choose, you **must** configure `STATIC_ROOT` in your `settings.py` so that the `collectstatic` command knows where to build your static assets.
+```python
+import os
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+```
+
+### WhiteNoise (Render Only)
+* **For Render:** You *must* install and configure `whitenoise` to serve static files. `WhiteNoiseMiddleware` must be added to your `MIDDLEWARE` array in `settings.py`.
+* **For Vercel:** Vercel natively serves static files via its Edge CDN, so WhiteNoise is automatically skipped and not required.
+
+## 4. Environment Variables
+Hardcoded secrets are a security risk and are strictly blocked by Atlas.
+
+* **SECRET_KEY:** Must be fetched from the environment. Hardcoded strings are rejected.
+  ```python
+  SECRET_KEY = os.environ.get('SECRET_KEY', 'default_secret')
+  ```
+* **DEBUG:** Must be strictly controlled by the environment to prevent leaking stack traces in production.
+  ```python
+  DEBUG = os.environ.get('RENDER') is None # Or 'VERCEL'
+  ```
+
+## 5. Security Settings (`ALLOWED_HOSTS`)
+Django will block incoming traffic with a `400 Bad Request` unless the domain is explicitly allowed. Atlas verifies that you are reading the correct environment variables for your chosen provider.
+
+* **For Render:** Ensure you have `os.environ.get('RENDER_EXTERNAL_HOSTNAME')` in your `ALLOWED_HOSTS`.
+* **For Vercel:** Ensure you have `os.environ.get('VERCEL_URL')` in your `ALLOWED_HOSTS`.
+
+*Example to support both:*
+```python
+ALLOWED_HOSTS = [
+    os.environ.get('RENDER_EXTERNAL_HOSTNAME', ''),
+    os.environ.get('VERCEL_URL', ''),
+]
+```
+
+## 6. Databases
+Platform-as-a-Service providers use ephemeral filesystems. If you write to a local `db.sqlite3` file in production, your database will be wiped clean every time the server restarts or deploys.
+
+* If your Django project relies on a database (i.e. you have apps in `INSTALLED_APPS` that require a database), you **must** configure PostgreSQL (or another remote database engine).
+* Atlas enforces this by requiring `dj-database-url` in your settings.
+* Example:
+```python
+import dj_database_url
+DATABASES = {
+    'default': dj_database_url.config(
+        default='postgres://user:pass@localhost:5432/db',
+        conn_max_age=600
+    )
+}
+```
+*(Note: If your project does not use a database at all, Atlas will intelligently detect this by analyzing `INSTALLED_APPS` and skip the database requirement).*
+
+## 7. Health Checks (`urls.py`)
+Atlas performs automated health checks on your application immediately after deploying to ensure it booted correctly.
+* Your project must have a **root URL pattern** (e.g., `path('', views.home)`) configured in your primary `urls.py`. 
+* If it doesn't, the deployment health check will hit a `404 Not Found` and Atlas will rollback the deployment.
+
+## 8. Build Scripts
+* **For Render:** Atlas requires a `build.sh` script in the root of your project to tell Render how to build your app. It should contain:
+  ```bash
+  #!/usr/bin/env bash
+  set -o errexit
+  python -m pip install -r requirements.txt
+  python manage.py collectstatic --no-input
+  python manage.py migrate
+  ```
+* **For Vercel:** Vercel utilizes zero-configuration deployments. It will automatically detect `manage.py`, run `pip install`, and execute `collectstatic` natively. **No `build.sh` is required.**

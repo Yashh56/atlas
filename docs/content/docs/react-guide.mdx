@@ -1,0 +1,42 @@
+---
+title: React Guide
+description: Learn how to deploy and configure React applications with Atlas.
+---
+
+# React Deployment Guide
+
+This guide explains how to prepare your React project for deployment using Atlas. Atlas currently supports deploying static React applications to providers like **Netlify** and **Vercel**.
+
+Whether you use **Vite** or **Create React App**, Atlas automatically detects your setup and handles the build process.
+
+## 1. Directory Structure & `package.json`
+
+Atlas determines that your project is a React application by looking for `react` and `react-dom` in your `package.json` dependencies.
+* Ensure your `package.json` is at the root of your project or in the relevant frontend subdirectory.
+* If your frontend code is nested (e.g., in a `client/` folder), Atlas will automatically set the Root Directory for your cloud provider.
+
+## 2. Build Scripts
+
+Your `package.json` **must** include a `build` script. Atlas will automatically execute this script to generate your production-ready static assets.
+
+```json
+"scripts": {
+  "dev": "vite",
+  "build": "vite build",
+  "preview": "vite preview"
+}
+```
+
+Atlas will automatically use the correct package manager (`npm`, `yarn`, or `pnpm`) based on the lockfile present in your repository (`package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml`).
+
+## 3. Output Directories
+
+Atlas automatically maps the output directory based on the build tool detected:
+* **Vite**: Outputs to `dist/` by default.
+* **Create React App**: Outputs to `build/` by default.
+
+If your build tool outputs to a custom directory, you can configure it via the Atlas setup wizard.
+
+## 4. Self-Healing Builds
+
+If your `npm run build` command fails due to syntax errors, missing dependencies, or strict type-checking errors (in the case of TypeScript), Atlas will parse the build output, send the stack trace to the configured LLM, and automatically attempt to fix the error in the codebase before retrying the build.

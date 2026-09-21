@@ -1,0 +1,50 @@
+---
+title: Express Guide
+description: Learn how to deploy and configure Express backend applications with Atlas.
+---
+
+# Express Deployment Guide
+
+This guide explains how to deploy Node.js backend applications using Express via Atlas. Atlas currently supports deploying Express services and APIs primarily to **Render**.
+
+## 1. Project Detection
+
+Atlas determines your project is an Express application by detecting `express` in the dependencies of your `package.json`. 
+
+## 2. Server Entry Point & Scripts
+
+Unlike frontend frameworks that have a definitive build step, Express apps require a reliable start command. Your `package.json` must include a `start` script.
+
+```json
+"scripts": {
+  "start": "node index.js"
+}
+```
+
+* **No Build Step:** If you are using raw JavaScript, Atlas will skip the build step and proceed directly to deployment.
+* **TypeScript:** If you are using TypeScript with Express, you must include a `build` script (e.g., `tsc`) and ensure your `start` script points to the compiled output (e.g., `node dist/index.js`). Atlas will automatically run the build script if it exists.
+
+## 3. Port Configuration
+
+When deploying to a cloud provider like Render, your application must listen on the port assigned by the provider via the `PORT` environment variable.
+
+**Ensure your Express app respects `process.env.PORT`:**
+
+```javascript
+const express = require('express');
+const app = express();
+
+// Use the PORT environment variable provided by the cloud host
+const port = process.env.PORT || 3000;
+
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
+```
+If you hardcode a port (like `3000`), your deployment will fail health checks on Render. If Atlas detects a hardcoded port failing the build/health check, the auto-fix engine may automatically patch your code to use `process.env.PORT`.
+
+## 4. Databases and Secrets
+
+Express apps frequently connect to databases (PostgreSQL, MongoDB, etc.). 
+* When deploying to Render, Atlas can automatically provision a managed PostgreSQL database and attach the resulting `DATABASE_URL` directly to your Express service's environment.
+* Make sure you use environment variables (e.g., `process.env.DATABASE_URL`, `process.env.JWT_SECRET`) instead of hardcoding secrets into your source code.
