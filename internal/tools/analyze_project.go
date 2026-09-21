@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,13 +15,18 @@ import (
 // projectData mirrors orchestrator.ProjectState for JSON serialisation.
 // It is defined here to avoid an import cycle (tools ↔ orchestrator).
 type projectData struct {
-	Framework      *string     `json:"framework"`
-	Language       *string     `json:"language"`
-	Runtime        *string     `json:"runtime"`
-	PackageManager *string     `json:"package_manager"`
-	Docker         bool        `json:"docker"`
-	Git             projectGit  `json:"git"`
-	RenderServiceID *string     `json:"render_service_id,omitempty"`
+	Framework        *string    `json:"framework"`
+	Language         *string    `json:"language"`
+	Runtime          *string    `json:"runtime"`
+	PackageManager   *string    `json:"package_manager"`
+	Docker           bool       `json:"docker"`
+	Git              projectGit `json:"git"`
+	RenderServiceID  *string    `json:"render_service_id,omitempty"`
+	RenderDatabaseID *string    `json:"render_database_id,omitempty"`
+	DjangoModule     *string    `json:"django_module,omitempty"`
+	// RequiresDatabase is true when the Django project includes apps that need a database
+	// (auth, admin, sessions). False means no Postgres resource should be provisioned.
+	RequiresDatabase *bool      `json:"requires_database,omitempty"`
 }
 
 type projectGit struct {
@@ -79,6 +86,8 @@ func (a AnalyzeProject) Execute(ctx context.Context, s *session.Session) (ToolRe
 		lang := "go"
 		proj.Framework = &fw
 		proj.Language = &lang
+	} else if entrySet["requirements.txt"] || entrySet["pyproject.toml"] || entrySet["Pipfile"] || entrySet["manage.py"] {
+		proj = a.detectPython(ctx, s, proj, entrySet)
 	}
 	// If neither, leave Framework/Language nil.
 
@@ -98,6 +107,61 @@ func (a AnalyzeProject) Execute(ctx context.Context, s *session.Session) (ToolRe
 		Output:   projectSummary(proj.Framework, proj.PackageManager),
 		Duration: time.Since(start),
 	}, nil
+}
+
+// detectPython populates proj fields from Python heuristics.
+func (a AnalyzeProject) detectPython(
+	ctx context.Context,
+	s *session.Session,
+	proj *projectData,
+	entrySet map[string]bool,
+) *projectData {
+	lang := "python"
+	proj.Language = &lang
+	pm := "pip"
+	proj.PackageManager = &pm
+
+	fw := "python" // default
+
+	// Read requirements.txt if it exists to check for frameworks
+	if entrySet["requirements.txt"] {
+		readTool := ReadFile{Path: filepath.Join(a.WorkspaceRoot, "requirements.txt")}
+		if readResult, _ := readTool.Execute(ctx, s); readResult.Success {
+			// Strip null bytes in case of UTF-16LE encoding
+			content := strings.ReplaceAll(strings.ToLower(readResult.Output), "\x00", "")
+			if strings.Contains(content, "django") {
+				fw = "django"
+			} else if strings.Contains(content, "fastapi") {
+				fw = "fastapi"
+			} else if strings.Contains(content, "flask") {
+				fw = "flask"
+			}
+		}
+	}
+	
+	// Check manage.py regardless of requirements.txt
+	if entrySet["manage.py"] {
+		fw = "django"
+	}
+
+	if fw == "django" {
+		// Attempt to find the django module (the directory containing settings.py)
+		matches, err := filepath.Glob(filepath.Join(a.WorkspaceRoot, "*", "settings.py"))
+		if err == nil && len(matches) > 0 {
+			moduleDir := filepath.Base(filepath.Dir(matches[0]))
+			proj.DjangoModule = &moduleDir
+
+			// Detect whether the project uses a database (auth/admin/sessions in INSTALLED_APPS).
+			// This determines whether Postgres should be provisioned at deploy time.
+			if b, readErr := os.ReadFile(matches[0]); readErr == nil {
+				usesDB := djangoUsesDatabase(string(b))
+				proj.RequiresDatabase = &usesDB
+			}
+		}
+	}
+
+	proj.Framework = &fw
+	return proj
 }
 
 // detectJS populates proj fields from package.json + lockfile heuristics.

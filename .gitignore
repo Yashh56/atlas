@@ -3,3 +3,9 @@
 .env
 # Local Netlify folder
 .netlify
+
+# Python and Test Environments
+.venv/
+venv/
+__pycache__/
+*.pyc

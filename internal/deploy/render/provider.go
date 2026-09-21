@@ -3,15 +3,20 @@ package render
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Yashh56/atlas/internal/build"
+	"github.com/Yashh56/atlas/internal/cliutil"
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/deploy"
 	"github.com/Yashh56/atlas/internal/state"
@@ -26,8 +31,11 @@ func (r *RenderProvider) Name() string { return "render" }
 
 func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*deploy.Deployment, error) {
 	var proj struct {
-		RenderServiceID *string `json:"render_service_id"`
-		Git             struct {
+		RenderServiceID  *string `json:"render_service_id,omitempty"`
+		RenderDatabaseID *string `json:"render_database_id,omitempty"`
+		DjangoModule     *string `json:"django_module,omitempty"`
+		RequiresDatabase *bool   `json:"requires_database,omitempty"`
+		Git              struct {
 			CommitSHA *string `json:"commit_sha"`
 			Branch    *string `json:"branch"`
 			Remote    *string `json:"remote"`
@@ -64,10 +72,79 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 		remote = *proj.Git.Remote
 	}
 
+	ownerID, err := r.getOwnerID(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("render deploy: %w", err)
+	}
+
 	var serviceID string
+	provisionNewService := false
 	if proj.RenderServiceID == nil || *proj.RenderServiceID == "" {
+		provisionNewService = true
+	} else {
+		err := r.checkServiceExists(ctx, token, *proj.RenderServiceID)
+		if err != nil && strings.Contains(err.Error(), "status 404") {
+			fmt.Printf("  %s Previous Render service not found, reprovisioning...\n", cliutil.IconWarning)
+			provisionNewService = true
+		} else {
+			serviceID = *proj.RenderServiceID
+		}
+	}
+
+	dbConnString := ""
+	if proj.Framework != nil && *proj.Framework == "django" {
+		// Only provision Postgres if the project actually uses a database.
+		// Default to true when the field is absent (conservative: assume DB needed).
+		requiresDB := true
+		if proj.RequiresDatabase != nil {
+			requiresDB = *proj.RequiresDatabase
+		}
+
+		if requiresDB {
+			provisionNewDB := false
+			if proj.RenderDatabaseID == nil || *proj.RenderDatabaseID == "" {
+				provisionNewDB = true
+			} else {
+				connStr, err := r.getDatabaseConnectionInfo(ctx, token, *proj.RenderDatabaseID)
+				if err != nil {
+					if strings.Contains(err.Error(), "status 404") {
+						fmt.Printf("  %s Previous Render database not found, reprovisioning...\n", cliutil.IconWarning)
+						provisionNewDB = true
+					} else {
+						return nil, fmt.Errorf("render deploy: failed to get database connection info: %w", err)
+					}
+				} else {
+					dbConnString = connStr
+				}
+			}
+
+			if provisionNewDB {
+				if !provisionNewService {
+					return nil, fmt.Errorf("render deploy: existing service %s is missing its database connection. Please clear the service ID from project.json to reprovision, or add the database ID", serviceID)
+				}
+				fmt.Printf("  %s Provisioning Postgres database on Render...\n", cliutil.IconArrow)
+				dbID, err := r.createDatabase(ctx, token, ownerID, in.WorkspaceRoot)
+				if err != nil {
+					return nil, fmt.Errorf("render deploy: failed to provision database: %w", err)
+				}
+				proj.RenderDatabaseID = &dbID
+				if saveErr := state.SaveJSON(filepath.Join(in.WorkspaceRoot, ".atlas"), "project.json", &proj); saveErr != nil {
+					fmt.Printf("Warning: failed to save Render Database ID to project.json: %v\n", saveErr)
+				}
+
+				connStr, err := r.getDatabaseConnectionInfo(ctx, token, *proj.RenderDatabaseID)
+				if err != nil {
+					return nil, fmt.Errorf("render deploy: failed to get database connection info: %w", err)
+				}
+				dbConnString = connStr
+			}
+		}
+		// else: no DB-requiring apps detected — skip provisioning entirely
+	}
+
+	if provisionNewService {
 		// Attempt to create the service
-		newServiceID, err := r.createService(ctx, token, remote, branch, proj.Framework, proj.PackageManager, in.WorkspaceRoot)
+		newServiceID, err := r.createService(ctx, token, ownerID, remote, branch, proj.Framework, proj.PackageManager, proj.DjangoModule, in.WorkspaceRoot, dbConnString)
 		if err != nil {
 			return nil, fmt.Errorf("render deploy: failed to automatically create service: %w", err)
 		}
@@ -77,8 +154,6 @@ func (r *RenderProvider) Deploy(ctx context.Context, in deploy.DeployInput) (*de
 		if saveErr := state.SaveJSON(filepath.Join(in.WorkspaceRoot, ".atlas"), "project.json", &proj); saveErr != nil {
 			fmt.Printf("Warning: failed to save newly created Render Service ID to project.json: %v\n", saveErr)
 		}
-	} else {
-		serviceID = *proj.RenderServiceID
 	}
 
 	// 1. Trigger the deploy
@@ -216,20 +291,20 @@ func (r *RenderProvider) fetchServiceURL(ctx context.Context, serviceID, token, 
 			ServiceDetails map[string]interface{} `json:"serviceDetails"`
 		} `json:"service"`
 	}
-	
+
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	if err := json.Unmarshal(bodyBytes, &serviceResp); err != nil {
 		return nil, fmt.Errorf("render deploy: decoding service details: %w", err)
 	}
 
 	url := ""
-	
+
 	// Check if wrapped in "service"
 	details := serviceResp.ServiceDetails
 	if serviceResp.Service != nil && serviceResp.Service.ServiceDetails != nil {
 		details = serviceResp.Service.ServiceDetails
 	}
-	
+
 	if u, exists := details["url"].(string); exists && u != "" {
 		url = u
 	} else {
@@ -247,8 +322,6 @@ func (r *RenderProvider) fetchServiceURL(ctx context.Context, serviceID, token, 
 	if url == "" {
 		return nil, fmt.Errorf("render deploy: could not find URL in service details. Response was: %s", string(bodyBytes))
 	}
-
-
 
 	return &deploy.Deployment{
 		URL:         url,
@@ -286,7 +359,7 @@ func (r *RenderProvider) Rollback(ctx context.Context, to *deploy.Deployment, in
 	}
 
 	payload := map[string]string{
-		"commitId": to.ProviderRef,
+		"commitId":   to.ProviderRef,
 		"clearCache": "do_not_clear",
 	}
 
@@ -384,12 +457,7 @@ func (r *RenderProvider) Rollback(ctx context.Context, to *deploy.Deployment, in
 	}
 }
 
-func (r *RenderProvider) createService(ctx context.Context, token, remote, branch string, fw, pm *string, workspaceRoot string) (string, error) {
-	if remote == "" {
-		return "", fmt.Errorf("no remote Git repository configured. Please push your code to GitHub/GitLab first")
-	}
-
-	// Fetch owner ID
+func (r *RenderProvider) getOwnerID(ctx context.Context, token string) (string, error) {
 	baseURL := r.BaseURL
 	if baseURL == "" {
 		baseURL = "https://api.render.com"
@@ -422,7 +490,18 @@ func (r *RenderProvider) createService(ctx context.Context, token, remote, branc
 	if len(owners) == 0 {
 		return "", fmt.Errorf("no Render owners found for this token")
 	}
-	ownerID := owners[0].Owner.ID
+	return owners[0].Owner.ID, nil
+}
+
+func (r *RenderProvider) createService(ctx context.Context, token, ownerID, remote, branch string, fw, pm, djangoModule *string, workspaceRoot, dbConnString string) (string, error) {
+	if remote == "" {
+		return "", fmt.Errorf("no remote Git repository configured. Please push your code to GitHub/GitLab first")
+	}
+
+	baseURL := r.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.render.com"
+	}
 
 	// Determine service details based on heuristics
 	serviceType := "web_service"
@@ -449,7 +528,7 @@ func (r *RenderProvider) createService(ctx context.Context, token, remote, branc
 		} else {
 			publishPath = "dist"
 		}
-	case "nextjs", "express", "node", "go":
+	case "nextjs", "express", "node", "go", "django":
 		serviceType = "web_service"
 	}
 
@@ -461,13 +540,17 @@ func (r *RenderProvider) createService(ctx context.Context, token, remote, branc
 		for _, arg := range args {
 			buildStr += " " + arg
 		}
-		
+
 		if cmd == "go" {
 			buildCommand = "go build -o app"
 		} else {
 			// Prepend the install command for JS/TS
 			buildCommand = fmt.Sprintf("%s install && %s", packageManager, buildStr)
 		}
+	}
+
+	if framework == "django" {
+		buildCommand = "./build.sh"
 	}
 
 	// Resolve start command
@@ -477,6 +560,27 @@ func (r *RenderProvider) createService(ctx context.Context, token, remote, branc
 		startCommand = fmt.Sprintf("%s run start", packageManager)
 	} else if framework == "express" || framework == "node" {
 		startCommand = "node index.js"
+	} else if framework == "django" {
+		modName := "myproject"
+		if djangoModule != nil && *djangoModule != "" {
+			modName = *djangoModule
+		}
+
+		hasGunicorn := false
+		hasUvicorn := false
+		if reqBytes, err := os.ReadFile(filepath.Join(workspaceRoot, "requirements.txt")); err == nil {
+			reqContent := strings.ToLower(string(reqBytes))
+			hasGunicorn = strings.Contains(reqContent, "gunicorn")
+			hasUvicorn = strings.Contains(reqContent, "uvicorn")
+		}
+
+		if hasGunicorn && hasUvicorn {
+			startCommand = fmt.Sprintf("python -m gunicorn %s.asgi:application -k uvicorn.workers.UvicornWorker", modName)
+		} else if hasUvicorn {
+			startCommand = fmt.Sprintf("python -m uvicorn %s.asgi:application --host 0.0.0.0", modName)
+		} else {
+			startCommand = fmt.Sprintf("python -m gunicorn %s.wsgi:application", modName)
+		}
 	} else {
 		startCommand = fmt.Sprintf("%s start", packageManager)
 	}
@@ -487,6 +591,42 @@ func (r *RenderProvider) createService(ctx context.Context, token, remote, branc
 		repoName = "atlas-service"
 	}
 
+	// Calculate rootDir if the workspace is in a subdirectory of the git repo
+	rootDir := ""
+	gitCmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	gitCmd.Dir = workspaceRoot
+	if out, err := gitCmd.Output(); err == nil {
+		gitRoot := strings.TrimSpace(string(out))
+		// git outputs paths with forward slashes even on Windows, so we use filepath.ToSlash
+		if rel, err := filepath.Rel(filepath.ToSlash(gitRoot), filepath.ToSlash(workspaceRoot)); err == nil {
+			if rel != "." && rel != "" {
+				rootDir = filepath.ToSlash(rel)
+			}
+		}
+	}
+
+	filterPaths := []string{
+		"src/**",
+		"public/**",
+		"package.json",
+		"package-lock.json",
+		"vite.config.js",
+	}
+	if framework == "django" || framework == "python" || framework == "flask" || framework == "fastapi" {
+		filterPaths = []string{
+			"**/*.py",
+			"requirements.txt",
+			"build.sh",
+			"manage.py",
+		}
+	} else if framework == "go" {
+		filterPaths = []string{
+			"**/*.go",
+			"go.mod",
+			"go.sum",
+		}
+	}
+
 	// Payload for POST /v1/services
 	payload := map[string]interface{}{
 		"type":    serviceType,
@@ -494,14 +634,9 @@ func (r *RenderProvider) createService(ctx context.Context, token, remote, branc
 		"name":    repoName,
 		"repo":    remote, // e.g. https://github.com/user/repo
 		"branch":  branch,
+		"rootDir": rootDir,
 		"buildFilter": map[string]interface{}{
-			"paths": []string{
-				"src/**",
-				"public/**",
-				"package.json",
-				"package-lock.json",
-				"vite.config.js",
-			},
+			"paths": filterPaths,
 			"ignoredPaths": []string{
 				"README.md",
 				".gitignore",
@@ -522,20 +657,61 @@ func (r *RenderProvider) createService(ctx context.Context, token, remote, branc
 		serviceDetails["pullRequestPreviewsEnabled"] = "no"
 		serviceDetails["previews"] = map[string]string{"generation": "off"}
 		serviceDetails["plan"] = "free"
-		
+
 		env := "node"
-		if fw != nil && *fw == "go" {
+		if framework == "go" {
 			env = "go"
+		} else if framework == "django" {
+			env = "python"
 		}
-		
+
 		serviceDetails["runtime"] = env
 		serviceDetails["env"] = env
 		serviceDetails["envSpecificDetails"] = map[string]string{
 			"buildCommand": buildCommand,
 			"startCommand": startCommand,
 		}
+
+		if framework == "django" {
+			// Generate a secret key
+			keyBytes := make([]byte, 32)
+			rand.Read(keyBytes)
+			secretKey := hex.EncodeToString(keyBytes)
+
+			// Try to store securely if possible
+			store, _ := credentials.Open()
+			if store != nil {
+				repoNameBase := filepath.Base(workspaceRoot)
+				_ = store.SetSecret(fmt.Sprintf("%s_django_secret", repoNameBase), secretKey)
+			}
+
+			envVars := []map[string]interface{}{
+				{
+					"key":   "WEB_CONCURRENCY",
+					"value": "4",
+				},
+				{
+					"key":   "SECRET_KEY",
+					"value": secretKey,
+				},
+				{
+					"key":   "PYTHON_VERSION",
+					"value": "3.10.13",
+				},
+			}
+			// Only wire DATABASE_URL when a Postgres resource was actually provisioned
+			if dbConnString != "" {
+				envVars = append([]map[string]interface{}{
+					{
+						"key":   "DATABASE_URL",
+						"value": dbConnString,
+					},
+				}, envVars...)
+			}
+			serviceDetails["envVars"] = envVars
+		}
 	}
-	
+
 	payload["serviceDetails"] = serviceDetails
 
 	bodyData, _ := json.Marshal(payload)
@@ -573,3 +749,115 @@ func (r *RenderProvider) createService(ctx context.Context, token, remote, branc
 	return createResult.Service.ID, nil
 }
 
+func (r *RenderProvider) createDatabase(ctx context.Context, token, ownerID, workspaceRoot string) (string, error) {
+	baseURL := r.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.render.com"
+	}
+
+	repoName := filepath.Base(workspaceRoot)
+	if repoName == "" || repoName == "." {
+		repoName = "atlas"
+	}
+
+	randBytes := make([]byte, 3)
+	rand.Read(randBytes)
+	dbName := repoName + "-db-" + hex.EncodeToString(randBytes)
+
+	payload := map[string]interface{}{
+		"name":    dbName,
+		"ownerId": ownerID,
+		"plan":    "free",
+		"version": "16",
+	}
+
+	bodyData, _ := json.Marshal(payload)
+	reqCreate, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1/postgres", bytes.NewReader(bodyData))
+	if err != nil {
+		return "", err
+	}
+	reqCreate.Header.Set("Authorization", "Bearer "+token)
+	reqCreate.Header.Set("Content-Type", "application/json")
+	reqCreate.Header.Set("Accept", "application/json")
+
+	respCreate, err := http.DefaultClient.Do(reqCreate)
+	if err != nil {
+		return "", err
+	}
+	defer respCreate.Body.Close()
+
+	if respCreate.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(respCreate.Body)
+		return "", fmt.Errorf("failed to create database (status %d): %s", respCreate.StatusCode, string(bodyBytes))
+	}
+
+	var createResult struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(respCreate.Body).Decode(&createResult); err != nil {
+		return "", err
+	}
+	if createResult.ID == "" {
+		return "", fmt.Errorf("no database ID returned from Render API")
+	}
+
+	return createResult.ID, nil
+}
+
+func (r *RenderProvider) getDatabaseConnectionInfo(ctx context.Context, token, dbID string) (string, error) {
+	baseURL := r.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.render.com"
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/postgres/%s/connection-info", baseURL, dbID), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("failed to fetch database connection info (status %d)", resp.StatusCode)
+	}
+
+	var info struct {
+		InternalConnectionString string `json:"internalConnectionString"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "", err
+	}
+	return info.InternalConnectionString, nil
+}
+
+func (r *RenderProvider) checkServiceExists(ctx context.Context, token, serviceID string) error {
+	baseURL := r.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.render.com"
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/services/%s", baseURL, serviceID), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		return fmt.Errorf("status 404")
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
+}

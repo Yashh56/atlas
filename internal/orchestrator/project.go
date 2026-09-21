@@ -15,13 +15,16 @@ type GitInfo struct {
 // ProjectState is written by AnalyzeProject. Owned by internal/tools via
 // orchestrator's SaveProject/LoadProject helpers.
 type ProjectState struct {
-	Framework      *string `json:"framework"`
-	Language       *string `json:"language"`
-	Runtime        *string `json:"runtime"`
-	PackageManager *string `json:"package_manager"`
-	Docker         bool    `json:"docker"`
-	Git             GitInfo `json:"git"`
-	RenderServiceID *string `json:"render_service_id,omitempty"`
+	Framework        *string `json:"framework"`
+	Language         *string `json:"language"`
+	Runtime          *string `json:"runtime"`
+	PackageManager   *string `json:"package_manager"`
+	Docker           bool    `json:"docker"`
+	Git              GitInfo `json:"git"`
+	RenderServiceID  *string `json:"render_service_id,omitempty"`
+	RenderDatabaseID *string `json:"render_database_id,omitempty"`
+	DjangoModule     *string `json:"django_module,omitempty"`
+	RequiresDatabase *bool   `json:"requires_database,omitempty"`
 }
 
 const projectFile = "project.json"

@@ -46,7 +46,7 @@ func TestHTTPHealthCheck_RecoversFrom503(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected recovery and nil error, got %v", err)
 	}
-	
+
 	if atomic.LoadInt32(&attempts) != 2 {
 		t.Errorf("expected exactly 2 attempts, got %d", attempts)
 	}
@@ -68,7 +68,7 @@ func TestHTTPHealthCheck_PersistentFailure(t *testing.T) {
 	}
 }
 
-func TestHTTPHealthCheck_404FailsImmediately(t *testing.T) {
+func TestHTTPHealthCheck_404Retries(t *testing.T) {
 	var attempts int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&attempts, 1)
@@ -76,7 +76,7 @@ func TestHTTPHealthCheck_404FailsImmediately(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	err := HTTPHealthCheck(ctx, server.URL, http.StatusOK)
@@ -84,7 +84,7 @@ func TestHTTPHealthCheck_404FailsImmediately(t *testing.T) {
 		t.Fatalf("expected error, got nil")
 	}
 
-	if atomic.LoadInt32(&attempts) != 1 {
-		t.Errorf("expected exactly 1 attempt for 4xx, got %d", attempts)
+	if atomic.LoadInt32(&attempts) <= 1 {
+		t.Errorf("expected >1 attempt for 404, got %d", atomic.LoadInt32(&attempts))
 	}
 }

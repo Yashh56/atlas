@@ -4,6 +4,7 @@ package build
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
@@ -32,6 +33,10 @@ func ResolveBuildCommand(framework, packageManager string) (string, []string, er
 		}
 	case "go":
 		return "go", []string{"build", "./..."}, nil
+	case "django":
+		return "python", []string{"manage.py", "check"}, nil
+	case "python", "fastapi", "flask":
+		return "python", []string{"-m", "compileall", "."}, nil
 	case "unknown", "":
 		return "", nil, nil
 	default:
@@ -63,6 +68,10 @@ func ResolveTestCommand(framework, packageManager string) (string, []string, err
 		}
 	case "go":
 		return "go", []string{"test", "./..."}, nil
+	case "django":
+		return "python", []string{"manage.py", "test"}, nil
+	case "python", "fastapi", "flask":
+		return "pytest", nil, nil
 	case "unknown", "":
 		return "", nil, nil
 	default:
@@ -106,5 +115,37 @@ func ResolvePublishDir(framework, packageManager, workspaceRoot string) (string,
 	}
 
 	return "", fmt.Errorf("could not determine the static output directory for framework %q. Please provide a manual --output-dir flag", framework)
+}
+
+// ResolvePythonBinary returns the path to a python or pip binary inside the local virtual env if it exists,
+// or falls back to the global binary name.
+func ResolvePythonBinary(workspaceRoot, binName string) string {
+	venvDirs := []string{".venv", "venv", "env"}
+	for _, dir := range venvDirs {
+		// Check for Windows venvDir\Scripts\binName.exe
+		winPath := filepath.Join(workspaceRoot, dir, "Scripts", binName+".exe")
+		if _, err := os.Stat(winPath); err == nil {
+			return winPath
+		}
+		// Check for Unix venvDir/bin/binName
+		unixPath := filepath.Join(workspaceRoot, dir, "bin", binName)
+		if _, err := os.Stat(unixPath); err == nil {
+			return unixPath
+		}
+	}
+
+	// No venv found. If the requested binary is exactly "python", verify it exists in PATH,
+	// and if not, fallback to "py" (Windows) or "python3" (Unix).
+	if binName == "python" {
+		if _, err := exec.LookPath("python"); err != nil {
+			if _, err := exec.LookPath("py"); err == nil {
+				return "py"
+			}
+			if _, err := exec.LookPath("python3"); err == nil {
+				return "python3"
+			}
+		}
+	}
+	return binName
 }
 

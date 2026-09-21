@@ -29,6 +29,11 @@ func TestRenderProvider_Deploy(t *testing.T) {
 		}
 
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/owners":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`[{"owner": {"id": "usr-123"}}]`))
+			
 		case r.Method == "POST" && r.URL.Path == "/v1/services/srv-123/deploys":
 			requestedTrigger = true
 			var body map[string]string

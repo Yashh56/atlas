@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Yashh56/atlas/internal/cliutil"
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/orchestrator"
 	"github.com/Yashh56/atlas/internal/workspace"
-	"github.com/Yashh56/atlas/internal/cliutil"
 )
 
 var providersCmd = &cobra.Command{
@@ -154,8 +154,8 @@ func runProvidersUnset(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("opening credential store: %w", err)
 	}
 
-	meta, ok, _ := store.GetMeta(provider)
-	if !ok || meta.Method != credentials.MethodStoredToken {
+	_, ok, _ := store.GetMeta(provider)
+	if !ok {
 		fmt.Printf("No stored key found for %q\n", provider)
 		return nil
 	}
@@ -164,10 +164,9 @@ func runProvidersUnset(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("deleting secret: %w", err)
 	}
 
-	store.SetMeta(credentials.ProviderCredential{
-		Provider: provider,
-		Method:   credentials.MethodEnvVar,
-	})
+	if err := store.DeleteMeta(provider); err != nil {
+		return fmt.Errorf("deleting metadata: %w", err)
+	}
 
 	fmt.Printf("%s Removed stored key for %q.\n", cliutil.IconSuccess, provider)
 	return nil

@@ -43,14 +43,24 @@ func (r RunBuildCommand) Name() string { return "run_build_command" }
 func (r RunBuildCommand) Execute(ctx context.Context, s *session.Session) (ToolResult, error) {
 	startedAt := time.Now().UTC()
 
-	// Resolve the command.
-	cmdBin, cmdArgs, err := build.ResolveBuildCommand(r.Framework, r.PackageManager)
-	if err != nil {
-		return ToolResult{
-			Success:  false,
-			Error:    err.Error(),
-			Duration: time.Since(startedAt),
-		}, nil
+	var cmdBin string
+	var cmdArgs []string
+
+	// 1. Check for a custom build.sh script override first
+	if _, err := os.Stat(filepath.Join(r.WorkspaceRoot, "build.sh")); err == nil {
+		cmdBin = "bash"
+		cmdArgs = []string{"build.sh"}
+	} else {
+		// 2. Resolve the command natively from framework
+		var err error
+		cmdBin, cmdArgs, err = build.ResolveBuildCommand(r.Framework, r.PackageManager)
+		if err != nil {
+			return ToolResult{
+				Success:  false,
+				Error:    err.Error(),
+				Duration: time.Since(startedAt),
+			}, nil
+		}
 	}
 
 	// Check if package.json has a build script for JS/TS projects
@@ -78,6 +88,10 @@ func (r RunBuildCommand) Execute(ctx context.Context, s *session.Session) (ToolR
 			Output:   "no build required",
 			Duration: time.Since(startedAt),
 		}, nil
+	}
+
+	if (r.Framework == "python" || r.Framework == "django" || r.Framework == "fastapi" || r.Framework == "flask") && cmdBin == "python" {
+		cmdBin = build.ResolvePythonBinary(r.WorkspaceRoot, cmdBin)
 	}
 
 	commandStr := cmdBin + " " + strings.Join(cmdArgs, " ")
