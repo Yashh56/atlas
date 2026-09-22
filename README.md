@@ -1,136 +1,131 @@
-# Atlas
+<div align="center">
+  <img src="public/logo.svg" alt="Atlas Logo" width="200"/>
+  <h1>Atlas</h1>
+  <p><strong>The Autonomous Deployment Pipeline</strong></p>
+  
+  [![Go Version](https://img.shields.io/github/go-mod/go-version/Yashh56/atlas?style=flat-square&color=00ADD8)](https://go.dev/)
+  [![Release](https://img.shields.io/github/v/release/Yashh56/atlas?style=flat-square&color=green)](https://github.com/Yashh56/atlas/releases)
+  [![License](https://img.shields.io/github/license/Yashh56/atlas?style=flat-square)](LICENSE)
 
-**Atlas** is an autonomous deployment pipeline — a CLI tool that analyzes your project, runs the build, uses an LLM to auto-fix build errors, and deploys to a cloud provider, all in one command.
+  <p>
+    Atlas analyzes your project, runs the build, uses an LLM to auto-fix build errors, and deploys to a cloud provider—all in a single command. 
+  </p>
+  <br/>
+</div>
 
 ---
 
-## Getting Started
+## ✨ Features
 
-### 1. Install
+- **🧠 Auto-Healing Builds:** When a build fails, Atlas diagnoses the error, suggests a patch using an LLM (Anthropic, Mistral, Groq, etc.), and retries autonomously.
+- **🚀 One-Command Deploy:** From local directory to live URL without opening the browser.
+- **🔌 Multi-Provider Support:** First-class deployments for Vercel, Render, and Netlify.
+- **🔎 Framework Detection:** Automatically detects React, Next.js, Express, and Vite projects and runs the correct build tools.
+- **🛡️ Secure Credential Management:** Employs the OS keychain (via `go-keyring`) to store your sensitive LLM and Provider API keys safely.
+- **🤖 Deterministic Pipeline:** Not a wild looping agent. Atlas follows a strictly bounded, predictable state machine for safe deployments.
+
+---
+
+## ⚡ Getting Started
+
+### 1. Installation
+
+You can install Atlas using our seamless install script (Linux/macOS):
 
 ```bash
-git clone https://github.com/Yashh56/atlas
-cd atlas
-go build -o atlas ./cmd/atlas
+curl -sSL https://raw.githubusercontent.com/Yashh56/atlas/master/install.sh | sh
+```
+
+*Or via Go directly:*
+```bash
+go install github.com/Yashh56/atlas/cmd/atlas@latest
 ```
 
 ### 2. Set your LLM API key
 
-Atlas uses an LLM (by default Anthropic Claude) to auto-fix build errors. Set the key for your chosen provider:
-
-**Using the CLI (Secure Credential Store):**
+Atlas requires an LLM to fix broken builds. We support Anthropic, OpenAI, Mistral, Gemini, Groq, and xAI.
 
 ```bash
-# Example: Store your Mistral key securely
-atlas models set mistral
+# Example: Store your Anthropic key securely via the CLI wizard
+atlas models set anthropic
 ```
+*You can also use environment variables like `export ANTHROPIC_API_KEY=...`*
 
-**Using Environment Variables:**
+### 3. Deploy Your Project
+
+Navigate to any supported project directory and let Atlas do the magic:
 
 ```bash
-# Example: Mistral
-export MISTRAL_API_KEY=your-key-here
-
-# Or add to .env in your project root:
-echo 'MISTRAL_API_KEY=your-key-here' >> .env
+cd ./my-nextjs-app
+atlas .
 ```
 
-### 3. Verify everything is ready
+Atlas will interactively ask you to choose a provider (e.g., Vercel), authenticate if you aren't already, run the build, fix any errors, and give you a live URL.
 
-**Run these first** — they tell you whether Atlas can actually work:
-
-```bash
-# Check your LLM API keys
-atlas models
-
-# Check your deploy provider credentials
-atlas providers
-```
-
-These are the real answers to "is this going to work?" before you run a deploy.
-
-### 4. Configure your project
-
-Create `.atlas/config.json` in your project root:
-
-```json
-{
-  "llm_provider": "mistral",
-  "default_model": "mistral-large-latest",
-  "approval": "manual"
-}
-```
-
-### 5. Deploy
-
-```bash
-# Run interactively (wizard will prompt for provider & action)
-atlas ./my-project
-
-# Or run fully non-interactive via flags
-atlas ./my-project --action deploy --provider render
-```
-
-Atlas will:
-
-1. Check Vercel auth (prompt to install/login if needed)
-2. Detect your framework and build command
-3. Run the build
-4. If build fails, call the LLM to fix it and retry (up to 4 times)
-5. Ask for approval, then deploy
+*(For CI/CD usage, you can run non-interactively: `atlas . --action deploy --provider vercel`)*
 
 ---
 
-## Commands
+## 📚 Commands
 
 | Command                                          | Description                       |
 | ------------------------------------------------ | --------------------------------- |
-| `atlas <path> --action deploy --provider <name>` | Full deploy pipeline              |
+| `atlas <path>`                                   | Interactive deployment wizard     |
+| `atlas <path> --action deploy --provider <name>` | Full non-interactive pipeline     |
 | `atlas providers`                                | Check deploy provider auth status |
 | `atlas models`                                   | Check LLM API key status          |
 | `atlas testllm <path>`                           | Verify LLM key with a live ping   |
-| `atlas debug run-command <path> -- <cmd>`        | Run a command in a workspace      |
 
-See [`docs/COMMANDS.md`](docs/COMMANDS.md) for full documentation with example output.
-
----
-
-## Supported Frameworks
-
-| Framework | Status        |
-| --------- | ------------- |
-| NextJS    | ✓ Implemented |
-| React     | ✓ Implemented |
-| Vite      | ✓ Implemented |
-| Express   | ✓ Implemented |
-| Django    | Planned       |
-
-## Supported Providers
-
-### Deploy
-
-| Provider | Status        |
-| -------- | ------------- |
-| Vercel   | ✓ Implemented |
-| Render   | ✓ Implemented |
-| Netlify  | ✓ Implemented |
-| Fly.io   | Planned       |
-| Railway  | Planned       |
-
-### LLM
-
-| Provider       | Env var             |
-| -------------- | ------------------- |
-| Anthropic      | `ANTHROPIC_API_KEY` |
-| OpenAI         | `OPENAI_API_KEY`    |
-| Gemini         | `GEMINI_API_KEY`    |
-| Mistral        | `MISTRAL_API_KEY`   |
-| Groq           | `GROQ_API_KEY`      |
-| xAI (Grok)     | `XAI_API_KEY`       |
-| Local (Ollama) | No key needed       |
+*For a full breakdown of the architecture, see our [Documentation](docs/content/docs/architecture.mdx).*
 
 ---
 
-## Architecture
+## 🌐 Supported Integrations
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full package layout and design rationale, including why credentials are global but session state is project-local.
+### Frameworks
+
+| Framework | Status |
+| --------- | ------ |
+| NextJS    | ✅     |
+| React     | ✅     |
+| Vite      | ✅     |
+| Express   | ✅     |
+| Django    | ⏳ Planned |
+
+### Deployment Providers
+
+| Provider | Status |
+| -------- | ------ |
+| Vercel   | ✅     |
+| Render   | ✅     |
+| Netlify  | ✅     |
+| Fly.io   | ⏳ Planned |
+| Railway  | ⏳ Planned |
+
+---
+
+## ❓ FAQ
+
+**Q: Does Atlas rewrite my code unexpectedly?**  
+A: No. Atlas uses exact-match patching. It does not rewrite entire files and will explicitly ask for approval before continuing the deployment after a patch.
+
+**Q: Where are my API keys stored?**  
+A: Atlas stores credentials securely in your operating system's native keychain (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux) and never writes them to plaintext files.
+
+**Q: Can I use local models?**  
+A: Yes! You can configure Atlas to use local LLMs (like Ollama) for completely free, private auto-healing.
+
+---
+
+## 🗺️ Future Plans
+
+- **Docker Support:** Automatically generate `Dockerfile`s for unknown frameworks.
+- **Rollback Mechanics:** Automatically revert to a previous healthy deployment if the post-deployment health check fails.
+- **More Frameworks:** Deep integrations for Django, Spring Boot, and Laravel.
+- **Multi-Environment Deployments:** Native support for staging and production branching.
+
+---
+
+<div align="center">
+  <sub>Built with ❤️ by the Atlas Team.</sub>
+</div>
