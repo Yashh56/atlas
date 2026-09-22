@@ -5,13 +5,25 @@ description: Install Atlas and deploy your first application.
 
 # Getting Started
 
-Atlas is distributed as a Go binary. You can install it directly using the standard `go install` command, or build it from source.
+import { CodeGroup } from "@umami/shiso/components";
+
+Atlas is distributed as a single standalone binary. You can install it using our automated scripts or via Go.
 
 ## Installation
 
-```bash
-go install github.com/Yashh56/atlas/cmd/atlas@latest
-```
+<CodeGroup>
+  ```bash macOS/Linux
+  curl -sSL https://raw.githubusercontent.com/Yashh56/atlas/master/install.sh | sh
+  ```
+
+  ```powershell Windows
+  iwr -useb https://raw.githubusercontent.com/Yashh56/atlas/master/install.ps1 | iex
+  ```
+
+  ```bash Go
+  go install github.com/Yashh56/atlas/cmd/atlas@latest
+  ```
+</CodeGroup>
 
 Make sure your `$(go env GOPATH)/bin` directory is in your system's `PATH`.
 

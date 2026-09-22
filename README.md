@@ -30,10 +30,16 @@
 
 ### 1. Installation
 
-You can install Atlas using our seamless install script (Linux/macOS):
+You can install Atlas using our seamless installation scripts:
 
+**macOS & Linux:**
 ```bash
 curl -sSL https://raw.githubusercontent.com/Yashh56/atlas/master/install.sh | sh
+```
+
+**Windows (PowerShell):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/Yashh56/atlas/master/install.ps1 | iex
 ```
 
 *Or via Go directly:*
