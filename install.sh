@@ -5,10 +5,10 @@ set -e
 # Atlas Installer Script
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Yashh56/atlas/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Yashh56/atlas/master/install.sh | sh
 #
 # Install a specific version:
-#   curl -fsSL https://raw.githubusercontent.com/Yashh56/atlas/main/install.sh | VERSION=v0.1.0 sh
+#   curl -fsSL https://raw.githubusercontent.com/Yashh56/atlas/master/install.sh | VERSION=v0.1.0 sh
 
 REPO="Yashh56/atlas"
 PROJECT_NAME="atlas"
@@ -103,10 +103,23 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-# GoReleaser archive name
-FILE_NAME="${PROJECT_NAME}_${VERSION}_${OS_NAME}_${ARCH_NAME}.tar.gz"
+# Find matching asset from the release API response
+info "Looking for ${OS_NAME} ${ARCH_NAME} release asset..."
 
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${FILE_NAME}"
+RELEASE_JSON="$(curl -fsSL -H "Accept: application/vnd.github+json" "${GITHUB_API}/releases/tags/v${VERSION}")"
+
+DOWNLOAD_URL="$(
+    echo "$RELEASE_JSON" |
+    sed -n 's/.*"browser_download_url": *"\([^"]*'"${OS_NAME}"'[^"]*'"${ARCH_NAME}"'[^"]*\.tar\.gz\)".*/\1/p' |
+    head -n 1
+)"
+
+if [ -z "$DOWNLOAD_URL" ]; then
+    error "Could not find a ${OS_NAME} ${ARCH_NAME} tar.gz asset for v${VERSION}."
+    exit 1
+fi
+
+FILE_NAME="$(basename "$DOWNLOAD_URL")"
 CHECKSUM_URL="https://github.com/${REPO}/releases/download/v${VERSION}/checksums.txt"
 
 info "Version: v${VERSION}"
