@@ -1,0 +1,79 @@
+---
+title: Getting Started
+description: Install Atlas and deploy your first application.
+---
+
+# Getting Started
+
+import { CodeGroup } from "@umami/shiso/components";
+
+Atlas is distributed as a single standalone binary. You can install it using our automated scripts or via Go.
+
+## Installation
+
+<CodeGroup>
+  ```bash macOS/Linux
+  curl -sSL https://raw.githubusercontent.com/Yashh56/atlas/master/install.sh | sh
+  ```
+
+  ```powershell Windows
+  iwr -useb https://raw.githubusercontent.com/Yashh56/atlas/master/install.ps1 | iex
+  ```
+
+  ```bash Go
+  go install github.com/Yashh56/atlas/cmd/atlas@latest
+  ```
+</CodeGroup>
+
+Make sure your `$(go env GOPATH)/bin` directory is in your system's `PATH`.
+
+Alternatively, to build from source:
+
+```bash
+git clone https://github.com/Yashh56/atlas
+cd atlas
+go build -o atlas ./cmd/atlas
+```
+
+## Configuring LLM Providers
+
+Atlas requires an LLM API key to perform its "self-healing" build checks. You can provide this securely via the CLI. Atlas supports Anthropic, OpenAI, Mistral, Gemini, Groq, and xAI.
+
+```bash
+# Example: Store your Anthropic key securely in the OS keychain
+atlas models set anthropic
+```
+
+You can verify your configuration at any time by running:
+
+```bash
+atlas models
+```
+
+## Your First Deployment
+
+Atlas is designed to be completely zero-config. Simply navigate to your project directory and run the `atlas` command interactively.
+
+```bash
+cd ./my-web-app
+atlas .
+```
+
+The interactive wizard will guide you through:
+1. **Model Selection**: Choosing which LLM to use for fixing code.
+2. **Action Selection**: Choosing whether to just build, or to build and deploy.
+3. **Provider Selection**: Choosing a deployment provider (like Vercel, Render, or Netlify).
+4. **Authentication**: If you aren't logged in, Atlas will prompt you to provide a token or automatically run the provider's CLI login.
+
+Once configured, Atlas will detect your framework, validate your Git state, build your application, fix any build errors automatically, and finally deploy the project, returning your live URL!
+
+## Non-Interactive Mode (CI/CD)
+
+If you are running Atlas in a CI/CD pipeline (like GitHub Actions), you can bypass the interactive wizard by providing flags:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export VERCEL_TOKEN=...
+
+atlas . --action deploy --provider vercel --model anthropic --auto-rollback-on-unhealthy
+```

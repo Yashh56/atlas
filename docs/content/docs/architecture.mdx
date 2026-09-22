@@ -1,3 +1,10 @@
+---
+title: Atlas Architecture
+description: Deep dive into the internal design and deployment pipeline of Atlas.
+---
+
+import { Tree } from "@umami/shiso/components";
+
 # Atlas Architecture
 
 Atlas is an autonomous deployment pipeline — a Go CLI that takes a project directory, runs the analysis → build → fix → deploy pipeline, and manages credentials and LLM calls along the way.
@@ -6,44 +13,48 @@ Atlas is an autonomous deployment pipeline — a Go CLI that takes a project dir
 
 ## Package Layout
 
-```
-atlas/
-├── cmd/
-│   └── atlas/
-│       ├── main.go          Entry point — loads .env, calls cmd.Execute()
-│       └── cmd/             Cobra command wiring
-│           ├── root.go      Root command + subcommand registration
-│           ├── deploy.go    `atlas deploy <path> --provider <name>`
-│           ├── debug.go     `atlas debug run-command`
-│           ├── testllm.go   `atlas testllm <path>` — verify LLM key
-│           ├── providers.go `atlas providers` — deploy auth status
-│           └── models.go    `atlas models` — LLM key status
-│
-├── internal/
-│   ├── config/        Project-local configuration (.atlas/config.json)
-│   ├── credentials/   Global per-user credential store (OS keychain)
-│   ├── workspace/     Workspace resolution (path validation, git root)
-│   ├── session/       Session lifecycle and ID management
-│   ├── state/         JSON persistence helpers (project.json, build.json, …)
-│   ├── build/         Build command detection and execution
-│   ├── detector/      Framework/package manager detection
-│   ├── tools/         Individual pipeline tools (AnalyzeProject, RunBuildCommand, FixCode, …)
-│   ├── llm/           GoAI-based LLM client and provider resolution
-│   ├── deploy/        Deployment providers (Vercel) + EnsureVercelAuth
-│   ├── orchestrator/  Pipeline orchestration (the main loop)
-│   ├── registry/      Provider registry
-│   ├── healthcheck/   HTTP health check helpers
-│   ├── audit/         Audit logging
-│   ├── cliutil/       UI styling and terminal helpers
-│   └── version/       Global versioning and build information
-│
-├── skills/
-│   └── fix_build.md   System prompt for the fix-code LLM call
-│
-└── docs/
-    ├── ARCHITECTURE.md  (this file)
-    └── COMMANDS.md      CLI reference with real example output
-```
+<Tree>
+  <Tree.Folder name="atlas" defaultOpen>
+    <Tree.Folder name="cmd" defaultOpen>
+      <Tree.Folder name="atlas" defaultOpen>
+        <Tree.File name="main.go" />
+        <Tree.Folder name="cmd" defaultOpen>
+          <Tree.File name="root.go" />
+          <Tree.File name="deploy.go" />
+          <Tree.File name="debug.go" />
+          <Tree.File name="testllm.go" />
+          <Tree.File name="providers.go" />
+          <Tree.File name="models.go" />
+        </Tree.Folder>
+      </Tree.Folder>
+    </Tree.Folder>
+    <Tree.Folder name="internal">
+      <Tree.Folder name="config" />
+      <Tree.Folder name="credentials" />
+      <Tree.Folder name="workspace" />
+      <Tree.Folder name="session" />
+      <Tree.Folder name="state" />
+      <Tree.Folder name="build" />
+      <Tree.Folder name="detector" />
+      <Tree.Folder name="tools" />
+      <Tree.Folder name="llm" />
+      <Tree.Folder name="deploy" />
+      <Tree.Folder name="orchestrator" />
+      <Tree.Folder name="registry" />
+      <Tree.Folder name="healthcheck" />
+      <Tree.Folder name="audit" />
+      <Tree.Folder name="cliutil" />
+      <Tree.Folder name="version" />
+    </Tree.Folder>
+    <Tree.Folder name="skills">
+      <Tree.File name="fix_build.md" />
+    </Tree.Folder>
+    <Tree.Folder name="docs">
+      <Tree.File name="ARCHITECTURE.md" />
+      <Tree.File name="COMMANDS.md" />
+    </Tree.Folder>
+  </Tree.Folder>
+</Tree>
 
 ---
 

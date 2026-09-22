@@ -1,0 +1,302 @@
+---
+title: Atlas Commands
+description: Reference guide for all Atlas CLI commands and flags.
+---
+
+# Atlas CLI Commands
+
+All commands are invoked as `atlas <command> [flags]`.  
+Run `atlas --help` for a full list at any time.
+
+---
+
+## `atlas`
+
+The core command to analyze, build, fix, run tests, and deploy a project.
+
+```bash
+atlas [path] [flags]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--path <path>` | Project path (alternative to positional arg, use this for paths that collide with a subcommand name) |
+| `--model <name>` | LLM provider to use (e.g., `anthropic`, `openai`) (optional) |
+| `--action <mode>` | Action mode: `build`, `test`, `deploy`, `test-and-deploy` (optional) |
+| `--provider <name>` | Deployment provider: `vercel`, `render`, `netlify`, `fly`, `railway` (optional) |
+| `--output-dir <path>` | Manually specify the static output directory for deployment (optional) |
+| `--allow-dirty` | Skip the uncommitted-changes check and proceed anyway |
+| `--auto-rollback-on-unhealthy` | Automatically rollback without prompting if post-deploy health check fails |
+
+<Callout type="info">
+  **Interactive Wizard**  
+  Running `atlas <path>` without all required flags will launch an interactive terminal wizard to guide you through selecting a model, picking an action, and setting credentials.
+</Callout>
+
+<Callout type="warn">
+  **Path Collision Caveat**  
+  If your project directory shares a name with a registered subcommand (like `models`, `providers`, `debug`), `atlas <that-name>` will run the subcommand, not treat it as a path. Use the `--path <that-name>` escape hatch to disambiguate.
+</Callout>
+
+### Examples
+
+<Tabs items={['Non-Interactive', 'Interactive', 'Auto-Fix', 'Build-Only']}>
+  <Tab value="Non-Interactive">
+    Run a complete deployment pipeline silently by providing all flags:
+    ```bash
+    $ atlas ./oss/todo --model anthropic --action deploy --provider vercel
+    ✓ Config loaded
+    ✓ Workspace resolved
+    → Checking Vercel authentication...
+    ✓ Vercel authenticated (cli_session, you@example.com)
+    ✓ Session created (sess_4881adb76fe6adb0)
+    ✓ Project analyzed → framework: react, package_manager: npm
+    ✓ Git validated → is_clean:true
+    ✓ Build succeeded (12.3s) → dist/
+    → Awaiting approval to deploy to vercel (production) [y/N]: y
+    → Deploying to vercel (production)...
+    ✓ Deployed successfully to https://my-app-xyz.vercel.app
+    ```
+  </Tab>
+  <Tab value="Interactive">
+    Provide just the path and let the CLI guide you:
+    ```bash
+    $ atlas ./oss/todo
+    # → Prompts for model selection
+    # → Prompts for action selection
+    # → Prompts for provider selection (if deploying)
+    ```
+  </Tab>
+  <Tab value="Auto-Fix">
+    If a build fails, Atlas will automatically spawn an LLM to diagnose and patch the failure:
+    ```bash
+    ✗ Build failed (attempt 1/4, 2.5s) → .atlas/sessions/sess_.../logs/build.log
+    → Attempting automatic fix...
+      Fixed: src/index.ts — "corrected missing semicolon on line 42"
+    → Rebuilding...
+    ✓ Build succeeded after 1 fix attempt(s) (3.1s)
+    ```
+  </Tab>
+  <Tab value="Build-Only">
+    Run the pipeline but stop after the build phase, completely skipping deployment:
+    ```bash
+    $ atlas ./oss/todo
+    # → model screen 
+    # → action screen → user picks "Just build" 
+    # → pipeline runs, NO provider screen
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## `atlas providers`
+
+Manage and view authentication status for all supported deploy providers.
+
+```bash
+atlas providers
+```
+
+**Example Output:**
+```bash
+$ atlas providers
+DEPLOY PROVIDERS
+  vercel     ✓ authenticated   (cli_session, you@example.com, verified 2026-07-13 10:02:00)
+  render     ✗ not configured
+```
+
+### Subcommands
+
+<Tabs items={['Set Provider', 'Unset Provider']}>
+  <Tab value="Set Provider">
+    Securely store a deployment provider token in your OS keychain.
+    ```bash
+    $ atlas providers set vercel
+    Vercel token: ████████████████████████████
+    ✓ Stored. This will be used instead of the CLI-delegated login next time you deploy.
+    ```
+  </Tab>
+  <Tab value="Unset Provider">
+    Remove a stored deployment provider token.
+    ```bash
+    $ atlas providers unset vercel
+    ✓ Removed stored key for "vercel".
+    ```
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+  **Security Note:** Secret values are never printed to the console — only `detected`, `authenticated`, or `not configured` status. Vercel and Render will check their respective env vars (`VERCEL_TOKEN`, `RENDER_TOKEN`) before falling back to the credential store.
+</Callout>
+
+---
+
+## `atlas models`
+
+Manage and view API key status for all supported LLM providers.
+
+```bash
+atlas models
+```
+
+**Example Output:**
+```bash
+$ atlas models
+LLM MODELS   (active: mistral-large-latest — from config.json's default_model)
+  anthropic  ✓ stored (claude-3-5-sonnet-20240620)
+  openai     ✗ OPENAI_API_KEY not set (gpt-4o)
+  gemini     ✗ GEMINI_API_KEY not set (gemini-1.5-pro)
+```
+
+### Subcommands
+
+<Tabs items={['Set Model', 'Unset Model']}>
+  <Tab value="Set Model">
+    Securely store an LLM API key.
+    ```bash
+    $ atlas models set anthropic
+    API key for anthropic: ████████████████████████████
+    ✓ Stored. Run `atlas models` to confirm.
+    ```
+  </Tab>
+  <Tab value="Unset Model">
+    Remove a stored LLM API key.
+    ```bash
+    $ atlas models unset anthropic
+    ✓ Removed stored key for "anthropic".
+    ```
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+  The `active:` label comes from `.atlas/config.json`'s `llm_provider` field in the current directory. Only environment variable presence is checked here; use `atlas testllm` to verify the key actually works.
+</Callout>
+
+---
+
+## `atlas testllm`
+
+Send a small ping to the configured LLM to verify the API key is active and successfully authenticated.
+
+```bash
+atlas testllm <path>
+```
+
+<Tabs items={['Success', 'Failure']}>
+  <Tab value="Success">
+    ```bash
+    $ atlas testllm .
+    Testing LLM connection to provider: mistral (model: mistral-large-latest)...
+    LLM Response: SUCCESS
+    ✓ API key is active and connection is working!
+    ```
+  </Tab>
+  <Tab value="Failure">
+    ```bash
+    $ atlas testllm .
+    Testing LLM connection to provider: anthropic (model: claude-3-5-sonnet-20240620)...
+    Error: API call failed: goai generate text (anthropic): resolving auth token: goai: no API key or token source configured
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## `atlas debug run-command`
+
+Run an arbitrary shell command in a workspace and show output. Useful for debugging build detection.
+
+```bash
+atlas debug run-command <path> -- <command> [args...]
+```
+
+```bash
+$ atlas debug run-command ./my-app -- npm run build
+> my-app@1.0.0 build
+> vite build
+...
+```
+
+---
+
+## Setting Up Credentials
+
+### LLM Providers (Environment Variables)
+
+Atlas automatically loads `.env` from the project's root via `godotenv`. Set the API key for your chosen provider before running:
+
+```env title=".env"
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Mistral
+MISTRAL_API_KEY=...
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+
+# Groq
+GROQ_API_KEY=gsk_...
+
+# Gemini
+GEMINI_API_KEY=...
+
+# xAI (Grok)
+XAI_API_KEY=...
+```
+
+### Vercel Deployment Configurations
+
+<Steps>
+<Step>
+**Option A — Environment Variable (CI/CD)**
+Set your Vercel token securely in your environment variables.
+```bash
+VERCEL_TOKEN=<your-vercel-token>
+```
+</Step>
+<Step>
+**Option B — CLI Interactive Setup**
+Securely store your token in your local OS keychain using Atlas.
+```bash
+atlas providers set vercel
+# Prompts for masked input
+```
+</Step>
+<Step>
+**Option C — CLI Login Callback**
+If no token is found, Atlas will prompt to launch the Vercel interactive login.
+```bash
+atlas <path> --provider vercel
+# Atlas will prompt to run `vercel login` if needed
+```
+</Step>
+</Steps>
+
+### Config File (`.atlas/config.json`)
+
+You can define project-level defaults in a `.atlas/config.json` file.
+
+```json title=".atlas/config.json"
+{
+  "llm_provider": "mistral",
+  "default_model": "mistral-large-latest",
+  "approval": "manual"
+}
+```
+
+<Callout type="info">
+  Supported `llm_provider` values: `anthropic`, `openai`, `gemini`, `mistral`, `groq`, `grok`, `local`.
+</Callout>
+
+For local models via Ollama:
+```json title=".atlas/config.json"
+{
+  "llm_provider": "local",
+  "default_model": "llama3",
+  "local_llm_base_url": "http://localhost:11434/v1"
+}
+```

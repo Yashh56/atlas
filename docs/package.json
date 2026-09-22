@@ -1,0 +1,24 @@
+{
+  "name": "docs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A documentation site built with Shiso.",
+  "type": "module",
+  "scripts": {
+    "dev": "shiso dev",
+    "check": "shiso check",
+    "build": "shiso build",
+    "preview": "shiso preview --outDir dist/client"
+  },
+  "dependencies": {
+    "@umami/shiso": "^1.1.4",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "pagefind": "^1.5.2",
+    "typescript": "^7.0.2"
+  }
+}

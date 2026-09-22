@@ -1,0 +1,49 @@
+---
+title: State Management
+description: How Atlas uses strictly isolated, project-local JSON context files to manage the deployment pipeline.
+---
+
+# State Management
+
+Atlas executes a multi-step pipeline (`Analyze → Build → Fix → Deploy`). Instead of passing around a massive, monolithic context object in memory, Atlas relies on a **Context Splitting** pattern. State is entirely file-backed, decoupled, and strictly scoped to individual sessions.
+
+## Session Lifecycle
+
+Whenever you run `atlas deploy`, Atlas creates a new, isolated **Session**. Sessions are entirely project-local and live inside your repository under `.atlas/sessions/`:
+
+```text
+.atlas/
+  sessions/
+    sess_4b2c1f9e0a7d/
+      session.json
+      project.json
+      build.json
+      deployment.json
+```
+
+The `session.json` file acts as the root tracker, storing the unique ID, timestamps, and overall execution status (e.g., `running`, `failed`, `done`).
+
+## Context Splitting
+
+Instead of a single `context.json` file that gets continuously appended to, Atlas splits state into separate files based on domain boundaries.
+
+Why? **Because only one part of the state changes at a time.**
+
+* **`project.json`**: Contains static facts about your codebase (Framework, Package Manager, Language). Once the Analyzer runs, this file never changes for the rest of the session. The Deploy tool can blindly read it without ever inspecting `package.json`.
+* **`build.json`**: Contains the executed build commands, exit codes, and log paths.
+* **`planner.json`**: Tracks the internal orchestrator's state, current retry counts, and next expected phases.
+* **`deployment.json`**: Contains the final output URL and environment metadata.
+
+## The Tool Ownership Rule
+
+To guarantee deterministic behavior and prevent race conditions, Atlas enforces a strict ownership model over these context files. 
+
+**Each context file is owned by exactly one tool.**
+
+- `AnalyzeProject` → owns `project.json`
+- `RunBuildCommand` → owns `build.json`
+- `Orchestrator` → owns `planner.json` and `deployment.json`
+
+A tool is only allowed to **write** to the file it owns. It may **read** from any other file. For example, `RunBuildCommand` reads from `project.json` to determine what command to run, but it can never modify `project.json`.
+
+This abstraction eliminates complex state bugs and allows each step of the deployment pipeline to be tested in complete isolation.
