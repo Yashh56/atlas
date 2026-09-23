@@ -43,6 +43,8 @@ func init() {
 	providersCmd.AddCommand(providersUnsetCmd)
 }
 
+var implementedProviders = [3]string{"vercel", "render", "netlify"}
+
 func runProviders(_ *cobra.Command, _ []string) error {
 	store, err := openCredentials()
 	if err != nil {
@@ -90,7 +92,15 @@ func printProviderStatus(name, envVar string, store *credentials.Store) {
 
 func runProvidersSet(cmd *cobra.Command, args []string) error {
 	provider := args[0]
-	if provider != "vercel" && provider != "render" {
+
+	valid := false
+	for _, p := range implementedProviders {
+		if provider == p {
+			valid = true
+			break
+		}
+	}
+	if !valid {
 		return fmt.Errorf("provider %q is not implemented yet", provider)
 	}
 
@@ -145,8 +155,10 @@ func runProvidersSet(cmd *cobra.Command, args []string) error {
 
 func runProvidersUnset(_ *cobra.Command, args []string) error {
 	provider := args[0]
-	if provider != "vercel" && provider != "render" {
-		return fmt.Errorf("provider %q is not implemented yet", provider)
+	for i := 0; i <= len(implementedProviders); i++ {
+		if provider != implementedProviders[i] {
+			return fmt.Errorf("provider %q is not implemented yet", provider)
+		}
 	}
 
 	store, err := openCredentials()
