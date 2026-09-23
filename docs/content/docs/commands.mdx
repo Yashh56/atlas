@@ -110,7 +110,7 @@ DEPLOY PROVIDERS
 
 ### Subcommands
 
-<Tabs items={['Set Provider', 'Unset Provider']}>
+<Tabs items={['Set Provider', 'Unset Provider', 'Reset All']}>
   <Tab value="Set Provider">
     Securely store a deployment provider token in your OS keychain.
     ```bash
@@ -124,6 +124,16 @@ DEPLOY PROVIDERS
     ```bash
     $ atlas providers unset vercel
     ✓ Removed stored key for "vercel".
+    ```
+  </Tab>
+  <Tab value="Reset All">
+    Remove all stored deployment provider tokens.
+    ```bash
+    $ atlas providers reset
+    ? Are you sure you want to remove all stored deployment provider tokens? (y/N) y
+    ✓ Removed stored key for "vercel".
+
+    Successfully removed 1 stored key(s).
     ```
   </Tab>
 </Tabs>
@@ -153,7 +163,7 @@ LLM MODELS   (active: mistral-large-latest — from config.json's default_model)
 
 ### Subcommands
 
-<Tabs items={['Set Model', 'Unset Model']}>
+<Tabs items={['Set Model', 'Unset Model', 'Reset All']}>
   <Tab value="Set Model">
     Securely store an LLM API key.
     ```bash
@@ -167,6 +177,16 @@ LLM MODELS   (active: mistral-large-latest — from config.json's default_model)
     ```bash
     $ atlas models unset anthropic
     ✓ Removed stored key for "anthropic".
+    ```
+  </Tab>
+  <Tab value="Reset All">
+    Remove all stored LLM API keys.
+    ```bash
+    $ atlas models reset
+    ? Are you sure you want to remove all stored LLM API keys? (y/N) y
+    ✓ Removed stored key for "anthropic".
+
+    Successfully removed 1 stored key(s).
     ```
   </Tab>
 </Tabs>
