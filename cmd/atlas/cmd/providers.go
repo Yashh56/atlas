@@ -37,13 +37,21 @@ var providersUnsetCmd = &cobra.Command{
 	RunE:  runProvidersUnset,
 }
 
+var providersResetCmd = &cobra.Command{
+	Use:   "reset",
+	Short: "Resets all the credential stored for all providers",
+	Long:  "Resets all the credential stored for all providers",
+	RunE:  runProvidersReset,
+}
+
+var implementedProviders = [3]string{"vercel", "render", "netlify"}
+
 func init() {
 	providersSetCmd.Flags().String("service-id", "", "Render service ID for the current project")
 	providersCmd.AddCommand(providersSetCmd)
 	providersCmd.AddCommand(providersUnsetCmd)
+	providersCmd.AddCommand(providersResetCmd)
 }
-
-var implementedProviders = [3]string{"vercel", "render", "netlify"}
 
 func runProviders(_ *cobra.Command, _ []string) error {
 	store, err := openCredentials()
@@ -181,5 +189,26 @@ func runProvidersUnset(_ *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("%s Removed stored key for %q.\n", cliutil.IconSuccess, provider)
+	return nil
+}
+
+func runProvidersReset(_ *cobra.Command, args []string) error {
+	confirm, err := cliutil.PromptConfirm("Are you sure you want to remove all stored LLM API keys?")
+	if err != nil {
+		return err
+	}
+	if !confirm {
+		fmt.Println("Aborted.")
+		return nil
+	}
+	store, err := openCredentials()
+	if err != nil {
+		return fmt.Errorf("opening credential store: %w", err)
+	}
+	for _, provider := range implementedProviders {
+		_ = store.DeleteSecret(provider)
+		_ = store.DeleteMeta(provider)
+	}
+	fmt.Printf("%s Removed stored key for all providers.\n", cliutil.IconSuccess)
 	return nil
 }

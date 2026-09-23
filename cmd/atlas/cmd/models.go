@@ -55,12 +55,20 @@ var modelsUnsetCmd = &cobra.Command{
 	RunE:  runModelsUnset,
 }
 
+var modelReset = &cobra.Command{
+	Use:   "reset",
+	Short: "Reset all the credential stored for all providers",
+	Long:  "Reset all the credential stored for all providers",
+	RunE:  runModelReset,
+}
+
 var modelNameFlag string
 
 func init() {
 	modelsSetCmd.Flags().StringVar(&modelNameFlag, "model-name", "", "Model name to select (local provider only)")
 	modelsCmd.AddCommand(modelsSetCmd)
 	modelsCmd.AddCommand(modelsUnsetCmd)
+	modelsCmd.AddCommand(modelReset)
 }
 
 func runModels(_ *cobra.Command, _ []string) error {
@@ -323,5 +331,53 @@ func runModelsUnset(_ *cobra.Command, args []string) error {
 	})
 
 	fmt.Printf("%s Removed stored key for %q.\n", cliutil.IconSuccess, provider)
+	return nil
+}
+
+func runModelReset(_ *cobra.Command, args []string) error {
+	confirm, err := cliutil.PromptConfirm("Are you sure you want to remove all stored LLM API keys?")
+	if err != nil {
+		return err
+	}
+	if !confirm {
+		fmt.Println("Aborted.")
+		return nil
+	}
+
+	store, err := openCredentials()
+	if err != nil {
+		return fmt.Errorf("opening credential store: %w", err)
+	}
+
+	removedCount := 0
+	for _, p := range llmProviderEnvVars {
+		if p.Name == "local" {
+			continue
+		}
+
+		meta, ok, _ := store.GetMeta("llm:" + p.Name)
+		if !ok || meta.Method != credentials.MethodStoredToken {
+			continue
+		}
+
+		if err := store.DeleteSecret("llm:" + p.Name); err != nil {
+			fmt.Printf("Failed to delete secret for %q: %v\n", p.Name, err)
+			continue
+		}
+
+		store.SetMeta(credentials.ProviderCredential{
+			Provider: "llm:" + p.Name,
+			Method:   credentials.MethodEnvVar,
+		})
+
+		fmt.Printf("%s Removed stored key for %q.\n", cliutil.IconSuccess, p.Name)
+		removedCount++
+	}
+
+	if removedCount == 0 {
+		fmt.Println("No stored keys found to remove.")
+	} else {
+		fmt.Printf("\nSuccessfully removed %d stored key(s).\n", removedCount)
+	}
 	return nil
 }
