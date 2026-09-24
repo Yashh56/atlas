@@ -56,7 +56,7 @@ type RunOptions struct {
 }
 
 // Run executes the full Atlas pipeline by dispatching to modular steps.
-func Run(ctx context.Context, workspacePath, providerName string, opts RunOptions) error {
+func Run(ctx context.Context, workspacePath, providerName string, opts RunOptions) (runErr error) {
 	cfg, ws, sess, sessDir, llmModel, provider, dep, err := executeSetup(ctx, workspacePath, providerName, opts)
 	if err != nil {
 		return err
@@ -69,8 +69,19 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	planner := NewPlanner(goal)
 	_ = SavePlanner(sessDir, planner)
 
+	// Update session status to running
+	sess.Status = "running"
+	_ = sess.Save(filepath.Join(ws.Root, ".atlas", "sessions"))
+
 	var didStash bool
 	defer func() {
+		if runErr != nil {
+			sess.Status = "failed"
+		} else {
+			sess.Status = "done"
+		}
+		_ = sess.Save(filepath.Join(ws.Root, ".atlas", "sessions"))
+
 		if didStash {
 			fmt.Printf("\n%s Restoring stashed uncommitted changes...\n", styleArrow)
 			popCmd := tools.RunCommand{
@@ -92,14 +103,15 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		}
 	}()
 
-	commitSHA, framework, packageManager, didStash, err := executeAnalyzeAndValidate(ctx, ws, sess, sessDir, planner, providerName, opts)
-	if err != nil {
-		return err
+	commitSHA, framework, packageManager, newDidStash, runErr := executeAnalyzeAndValidate(ctx, ws, sess, sessDir, planner, providerName, opts)
+	didStash = newDidStash
+	if runErr != nil {
+		return runErr
 	}
 
-	err = executeBuildLoop(ctx, ws, sess, sessDir, planner, llmModel, commitSHA, framework, packageManager, providerName, opts)
-	if err != nil {
-		return err
+	runErr = executeBuildLoop(ctx, ws, sess, sessDir, planner, llmModel, commitSHA, framework, packageManager, providerName, opts)
+	if runErr != nil {
+		return runErr
 	}
 
 	if opts.Action == ActionBuild {
@@ -110,9 +122,9 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	}
 
 	if opts.Action == ActionTest || opts.Action == ActionTestAndDeploy {
-		err = executeTests(ctx, ws, sess, sessDir, planner, framework, packageManager, opts)
-		if err != nil {
-			return err
+		runErr = executeTests(ctx, ws, sess, sessDir, planner, framework, packageManager, opts)
+		if runErr != nil {
+			return runErr
 		}
 		if opts.Action == ActionTest {
 			fmt.Printf("%s Action 'test' complete. Stopping before deploy.\n", styleCheck)
@@ -122,7 +134,8 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		}
 	}
 
-	return executeDeploy(ctx, ws, sessDir, planner, cfg, dep, provider, providerName, opts)
+	runErr = executeDeploy(ctx, ws, sessDir, planner, cfg, dep, provider, providerName, opts)
+	return runErr
 }
 
 func ensureAtlasGitignore(wsRoot string) {

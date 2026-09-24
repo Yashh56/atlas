@@ -225,6 +225,42 @@ atlas testllm <path>
 
 ---
 
+## `atlas status`
+
+Show the status and pipeline progress of the latest or a specified Atlas deployment session. It also performs a live health check on the deployment URL if available.
+
+```bash
+atlas status [session] [flags]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--session <uuid>` | Specific session UUID to check (default: latest) |
+| `--json` | Output status as JSON |
+
+**Example Output:**
+```bash
+$ atlas status
+Atlas Status
+Session: sess_1234abcd
+Status:  Done
+Started: 2 mins ago
+
+Pipeline Progress
+ ✓ Analyze Project
+ ✓ Build Project (Success, 1250ms)
+ ✓ Deploy Project
+
+Deployment
+  Provider: vercel
+  URL:      https://my-app-xyz.vercel.app
+  Health:   Up (200 OK)
+```
+
+---
+
 ## `atlas debug run-command`
 
 Run an arbitrary shell command in a workspace and show output. Useful for debugging build detection.

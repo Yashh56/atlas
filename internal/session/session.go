@@ -60,6 +60,13 @@ func (s *Session) Save(sessionsDir string) error {
 		return fmt.Errorf("session: renaming %s → %s: %w", tmp, final, err)
 	}
 
+	// Also update the 'latest' pointer file
+	latestPath := filepath.Join(sessionsDir, "latest")
+	latestTmp := latestPath + ".tmp"
+	if err := os.WriteFile(latestTmp, []byte(s.ID), 0o644); err == nil {
+		_ = os.Rename(latestTmp, latestPath)
+	}
+
 	return nil
 }
 
@@ -90,4 +97,45 @@ func generateID() string {
 		panic(fmt.Sprintf("session: crypto/rand unavailable: %v", err))
 	}
 	return "sess_" + hex.EncodeToString(b)
+}
+
+// GetLatestID reads the 'latest' pointer file to get the most recent session ID.
+// If the file doesn't exist, it falls back to finding the directory with the newest modification time.
+func GetLatestID(sessionsDir string) (string, error) {
+	latestPath := filepath.Join(sessionsDir, "latest")
+	if data, err := os.ReadFile(latestPath); err == nil {
+		id := string(data)
+		if id != "" {
+			return id, nil
+		}
+	}
+
+	// Fallback: Scan directory and find the most recently modified folder
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil {
+		return "", fmt.Errorf("session: reading sessions dir %s: %w", sessionsDir, err)
+	}
+
+	var latestID string
+	var latestTime time.Time
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(latestTime) {
+			latestTime = info.ModTime()
+			latestID = entry.Name()
+		}
+	}
+
+	if latestID == "" {
+		return "", fmt.Errorf("session: no sessions found in %s", sessionsDir)
+	}
+
+	return latestID, nil
 }
