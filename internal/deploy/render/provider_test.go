@@ -1,6 +1,7 @@
 package render_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -33,7 +34,7 @@ func TestRenderProvider_Deploy(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`[{"owner": {"id": "usr-123"}}]`))
-			
+
 		case r.Method == "POST" && r.URL.Path == "/v1/services/srv-123/deploys":
 			requestedTrigger = true
 			var body map[string]string
@@ -130,5 +131,71 @@ func TestRenderProvider_Deploy(t *testing.T) {
 	}
 	if dep.Provider != "render" {
 		t.Errorf("Expected provider 'render', got %q", dep.Provider)
+	}
+}
+
+func TestRenderProvider_Logs(t *testing.T) {
+	os.Setenv("RENDER_TOKEN", "mock-token")
+	defer os.Unsetenv("RENDER_TOKEN")
+
+	var logReqCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer mock-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if r.URL.Path == "/v1/owners" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`[{"owner": {"id": "usr-123"}}]`))
+			return
+		}
+
+		if r.URL.Path == "/v1/logs" {
+			logReqCount++
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			if r.URL.Query().Get("startTime") == "" {
+				w.Write([]byte(`{"logs": [{"message": "log line 1", "timestamp": "time1"}], "hasMore": true, "nextStartTime": "time1"}`))
+			} else if r.URL.Query().Get("startTime") == "time1" {
+				w.Write([]byte(`{"logs": [{"message": "log line 2", "timestamp": "time2"}], "hasMore": false, "nextStartTime": ""}`))
+			} else {
+				w.Write([]byte(`{"logs": [], "hasMore": false}`))
+			}
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	wsRoot := t.TempDir()
+	os.MkdirAll(filepath.Join(wsRoot, ".atlas"), 0755)
+	state.SaveJSON(filepath.Join(wsRoot, ".atlas"), "project.json", map[string]interface{}{
+		"render_service_id": "srv-123",
+	})
+
+	p := &render.RenderProvider{
+		BaseURL: srv.URL,
+	}
+
+	d := &deploy.Deployment{
+		WorkspaceRoot: wsRoot,
+	}
+
+	var buf bytes.Buffer
+	err := p.Logs(context.Background(), d, &buf, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !bytes.Contains([]byte(output), []byte("log line 1")) || !bytes.Contains([]byte(output), []byte("log line 2")) {
+		t.Errorf("expected logs not found in output: %s", output)
+	}
+
+	if logReqCount != 2 {
+		t.Errorf("expected 2 log requests (pagination), got %d", logReqCount)
 	}
 }
