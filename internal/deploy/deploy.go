@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -15,10 +16,11 @@ type DeployInput struct {
 
 // Deployment holds the result of a successful deployment.
 type Deployment struct {
-	URL        string
-	Provider   string
-	ProviderRef string // opaque reference used for rollback (e.g., deploy ID, commit SHA, or URL)
-	DeployedAt time.Time
+	URL           string
+	Provider      string
+	ProviderRef   string // opaque reference used for rollback (e.g., deploy ID, commit SHA, or URL)
+	DeployedAt    time.Time
+	WorkspaceRoot string
 }
 
 // Provider is the interface for all deployment platforms.
@@ -27,4 +29,8 @@ type Provider interface {
 	Deploy(ctx context.Context, in DeployInput) (*Deployment, error)
 	HealthCheck(ctx context.Context, d *Deployment) error
 	Rollback(ctx context.Context, to *Deployment, in DeployInput) error
+}
+
+type LogStreamer interface {
+	Logs(ctx context.Context, d *Deployment, w io.Writer, follow bool) error
 }

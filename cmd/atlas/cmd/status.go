@@ -24,7 +24,7 @@ var (
 )
 
 var statusCmd = &cobra.Command{
-	Use:   "status [session]",
+	Use:   "status [path]",
 	Short: "Show the status of the latest or specified Atlas deployment session",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runStatus,

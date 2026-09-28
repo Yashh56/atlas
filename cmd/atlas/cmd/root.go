@@ -62,6 +62,7 @@ func init() {
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(testllmCmd)
 	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(modelsCmd)
 	rootCmd.AddCommand(providersCmd)
 
