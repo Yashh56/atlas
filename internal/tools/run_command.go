@@ -1,4 +1,4 @@
-package tools
+﻿package tools
 
 import (
 	"bytes"
@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/Yashh56/atlas/internal/session"
@@ -29,7 +32,22 @@ func (r RunCommand) Name() string { return "run_command" }
 func (r RunCommand) Execute(ctx context.Context, _ *session.Session) (ToolResult, error) {
 	start := time.Now()
 
-	cmd := exec.CommandContext(ctx, r.Command, r.Args...)
+	cmdName := r.Command
+	args := r.Args
+
+	if runtime.GOOS == "windows" {
+		// Look up the actual binary path
+		if p, err := exec.LookPath(cmdName); err == nil {
+			ext := strings.ToLower(filepath.Ext(p))
+			if ext == ".cmd" || ext == ".bat" {
+				// Prevent AutoRun scripts (like fastfetch) from failing the build
+				args = append([]string{"/d", "/c", p}, r.Args...)
+				cmdName = "cmd.exe"
+			}
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, cmdName, args...)
 	cmd.Dir = r.Dir
 
 	var buf bytes.Buffer
