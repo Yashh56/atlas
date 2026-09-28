@@ -163,10 +163,15 @@ func runProvidersSet(cmd *cobra.Command, args []string) error {
 
 func runProvidersUnset(_ *cobra.Command, args []string) error {
 	provider := args[0]
-	for i := 0; i <= len(implementedProviders); i++ {
-		if provider != implementedProviders[i] {
-			return fmt.Errorf("provider %q is not implemented yet", provider)
+	valid := false
+	for _, p := range implementedProviders {
+		if provider == p {
+			valid = true
+			break
 		}
+	}
+	if !valid {
+		return fmt.Errorf("provider %q is not implemented yet", provider)
 	}
 
 	store, err := openCredentials()
