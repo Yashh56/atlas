@@ -3,12 +3,20 @@ package vercel
 import (
 	"context"
 	"fmt"
+	"io"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"regexp"
 	"time"
 
+	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/deploy"
 	"github.com/Yashh56/atlas/internal/tools"
 )
+
+var execCommandContext = exec.CommandContext
 
 // VercelProvider implements Provider for Vercel.
 type VercelProvider struct{}
@@ -91,4 +99,41 @@ func parseVercelURL(output string) (string, error) {
 	}
 
 	return "", fmt.Errorf("no vercel.app URL found in output")
+}
+
+func (p *VercelProvider) Logs(ctx context.Context, d *deploy.Deployment, w io.Writer, follow bool) error {
+	token, _ := resolveVercelToken()
+
+	args := []string{"logs", d.URL}
+	if token != "" {
+		args = append(args, "--token", token)
+	}
+	if follow {
+		args = append(args, "--follow")
+	}
+
+	cmdName := "vercel"
+	if runtime.GOOS == "windows" {
+		if p, err := exec.LookPath(cmdName); err == nil {
+			ext := strings.ToLower(filepath.Ext(p))
+			if ext == ".cmd" || ext == ".bat" {
+				args = append([]string{"/d", "/c", p}, args...)
+				cmdName = "cmd.exe"
+			}
+		}
+	}
+
+	cmd := execCommandContext(ctx, cmdName, args...)
+	cmd.Stdout = w
+	cmd.Stderr = w
+	return cmd.Run()
+}
+
+func resolveVercelToken() (string, error) {
+	// A bit hacky, but replicates deploy.EnsureProviderAuth's behavior.
+	// Since we don't have store easily, we load it.
+	store, _ := credentials.Open()
+	token, _ := deploy.EnsureProviderAuth("vercel", "VERCEL_TOKEN", store, io.Discard)
+	// Even if token is empty, vercel CLI might be authenticated via ~/.local/share/com.vercel.cli
+	return token, nil
 }
