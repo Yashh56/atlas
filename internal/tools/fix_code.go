@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"github.com/Yashh56/atlas/internal/cliutil"
 	"github.com/zendev-sh/goai"
 	"github.com/zendev-sh/goai/provider"
 
@@ -338,15 +338,12 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 	// Generate a visual diff
 	diffBuilder := &strings.Builder{}
 	diffBuilder.WriteString(fmt.Sprintf("Fixed: %s — %q\n\n", fix.File, fix.Reasoning))
-	
-	redStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
 
 	for _, line := range strings.Split(fix.OldStr, "\n") {
-		diffBuilder.WriteString(redStyle.Render(fmt.Sprintf("- %s", line)) + "\n")
+		diffBuilder.WriteString(cliutil.StyleError.Render(fmt.Sprintf("- %s", line)) + "\n")
 	}
 	for _, line := range strings.Split(fix.NewStr, "\n") {
-		diffBuilder.WriteString(greenStyle.Render(fmt.Sprintf("+ %s", line)) + "\n")
+		diffBuilder.WriteString(cliutil.StyleSuccess.Render(fmt.Sprintf("+ %s", line)) + "\n")
 	}
 	output := diffBuilder.String()
 	return ToolResult{
