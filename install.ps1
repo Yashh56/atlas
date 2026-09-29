@@ -1,17 +1,17 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $Repo = "Yashh56/atlas"
 $ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Atlas Installer
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 function Write-AtlasHeader {
     Write-Host ""
     Write-Host "  Atlas" -ForegroundColor Cyan -NoNewline
-    Write-Host "  —  Autonomous deployment pipeline" -ForegroundColor DarkGray
+    Write-Host "  -  Autonomous deployment pipeline" -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -21,7 +21,7 @@ function Write-Step {
     )
 
     Write-Host "  " -NoNewline
-    Write-Host "◆ " -NoNewline -ForegroundColor Cyan
+    Write-Host "[>] " -NoNewline -ForegroundColor Cyan
     Write-Host $Text -ForegroundColor Gray
 }
 
@@ -33,18 +33,26 @@ function Write-Status {
         [string]$Text
     )
 
-    $symbol = switch ($Type) {
-        "Success" { "✓" }
-        "Error"   { "✗" }
-        "Warning" { "!" }
-        "Info"    { "→" }
-    }
+    switch ($Type) {
+        "Success" {
+            $symbol = "[+]"
+            $color = "Green"
+        }
 
-    $color = switch ($Type) {
-        "Success" { "Green" }
-        "Error"   { "Red" }
-        "Warning" { "Yellow" }
-        "Info"    { "Cyan" }
+        "Error" {
+            $symbol = "[X]"
+            $color = "Red"
+        }
+
+        "Warning" {
+            $symbol = "[!]"
+            $color = "Yellow"
+        }
+
+        "Info" {
+            $symbol = "[i]"
+            $color = "Cyan"
+        }
     }
 
     Write-Host "  " -NoNewline
@@ -69,11 +77,11 @@ function Write-Failure {
     )
 
     Write-Host ""
-    Write-Host "  ┌─ Installation failed ──────────────────────────────" -ForegroundColor Red
-    Write-Host "  │" -ForegroundColor Red
-    Write-Host "  │  $Message" -ForegroundColor Gray
-    Write-Host "  │" -ForegroundColor Red
-    Write-Host "  └────────────────────────────────────────────────────" -ForegroundColor Red
+    Write-Host "  +-- Installation failed -----------------------------" -ForegroundColor Red
+    Write-Host "  |" -ForegroundColor Red
+    Write-Host "  |  $Message" -ForegroundColor Gray
+    Write-Host "  |" -ForegroundColor Red
+    Write-Host "  +----------------------------------------------------" -ForegroundColor Red
     Write-Host ""
 
     exit 1
@@ -86,32 +94,32 @@ function Write-SuccessPanel {
     )
 
     Write-Host ""
-    Write-Host "  ┌─ Installation complete ────────────────────────────" -ForegroundColor Green
-    Write-Host "  │" -ForegroundColor Green
-    Write-Host "  │  Atlas " -ForegroundColor Green -NoNewline
+    Write-Host "  +-- Installation complete ---------------------------" -ForegroundColor Green
+    Write-Host "  |" -ForegroundColor Green
+    Write-Host "  |  Atlas " -ForegroundColor Green -NoNewline
     Write-Host "v$Version" -ForegroundColor White
-    Write-Host "  │" -ForegroundColor Green
-    Write-Host "  │" -ForegroundColor Green
-    Write-Host "  │  Installed to" -ForegroundColor DarkGray
-    Write-Host "  │  $InstallPath" -ForegroundColor White
-    Write-Host "  │" -ForegroundColor Green
-    Write-Host "  │  Restart your terminal, then run:" -ForegroundColor DarkGray
-    Write-Host "  │" -ForegroundColor Green
-    Write-Host "  │  atlas --help" -ForegroundColor Cyan
-    Write-Host "  │" -ForegroundColor Green
-    Write-Host "  └────────────────────────────────────────────────────" -ForegroundColor Green
+    Write-Host "  |" -ForegroundColor Green
+    Write-Host "  |" -ForegroundColor Green
+    Write-Host "  |  Installed to" -ForegroundColor DarkGray
+    Write-Host "  |  $InstallPath" -ForegroundColor White
+    Write-Host "  |" -ForegroundColor Green
+    Write-Host "  |  Restart your terminal, then run:" -ForegroundColor DarkGray
+    Write-Host "  |" -ForegroundColor Green
+    Write-Host "  |  atlas --help" -ForegroundColor Cyan
+    Write-Host "  |" -ForegroundColor Green
+    Write-Host "  +----------------------------------------------------" -ForegroundColor Green
     Write-Host ""
 }
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Start
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 Write-AtlasHeader
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Detect architecture
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
     "arm64"
@@ -119,9 +127,9 @@ $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
     "x86_64"
 }
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Fetch latest release
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 Write-Step "Checking latest release..."
 
@@ -155,9 +163,9 @@ Write-InfoLine "Version" "v$version"
 Write-InfoLine "Platform" "Windows / $arch"
 Write-Host ""
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Download
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 $fileName = $asset.name
 $downloadUrl = $asset.browser_download_url
@@ -180,9 +188,9 @@ if (-not (Test-Path $tempZip)) {
 
 Write-Status "Success" "Download complete"
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Install
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 $installDir = Join-Path $env:LOCALAPPDATA "atlas\bin"
 
@@ -210,9 +218,9 @@ try {
 
 Write-Status "Success" "Atlas installed"
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Update PATH
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 
@@ -258,9 +266,9 @@ if (-not $pathExists) {
     Write-Status "Info" "Atlas is already in PATH"
 }
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Complete
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 Write-SuccessPanel `
     -Version $version `
