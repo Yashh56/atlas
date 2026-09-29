@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"github.com/Yashh56/atlas/internal/cliutil"
+
 	"fmt"
 	"os"
 	"os/exec"
@@ -99,6 +101,8 @@ func RunWizard(modelFlag string, actionFlag orchestrator.Action, providerFlag st
 
 	m.textInput = textinput.New()
 	m.textInput.EchoMode = textinput.EchoPassword
+	m.textInput.PromptStyle = cliutil.StylePrompt
+	m.textInput.Cursor.Style = cliutil.StylePrompt
 	m.textInput.Focus()
 
 	p := tea.NewProgram(&m, tea.WithAltScreen())
@@ -469,7 +473,9 @@ func createModelList(store *credentials.Store) list.Model {
 		}
 	}
 
-	l := list.New(items, list.NewDefaultDelegate(), 50, 15)
+	delegate := list.NewDefaultDelegate()
+	cliutil.ApplyListTheme(&delegate)
+	l := list.New(items, delegate, 50, 15)
 	l.Title = "Select LLM Provider"
 	l.SetShowStatusBar(false)
 	return l
@@ -506,7 +512,9 @@ func createProviderList(store *credentials.Store) list.Model {
 		items = append(items, item{title: p, desc: status})
 	}
 
-	l := list.New(items, list.NewDefaultDelegate(), 50, 15)
+	delegate := list.NewDefaultDelegate()
+	cliutil.ApplyListTheme(&delegate)
+	l := list.New(items, delegate, 50, 15)
 	l.Title = "Select Deploy Provider"
 	l.SetShowStatusBar(false)
 	return l
@@ -520,7 +528,9 @@ func createActionList() list.Model {
 		item{title: "Test + deploy", desc: "build, fix, run tests, and deploy"},
 	}
 
-	l := list.New(items, list.NewDefaultDelegate(), 50, 15)
+	delegate := list.NewDefaultDelegate()
+	cliutil.ApplyListTheme(&delegate)
+	l := list.New(items, delegate, 50, 15)
 	l.Title = "Select Action Mode"
 	l.SetShowStatusBar(false)
 	return l

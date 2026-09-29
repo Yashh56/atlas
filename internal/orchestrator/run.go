@@ -23,6 +23,8 @@ import (
 	"github.com/Yashh56/atlas/internal/workspace"
 )
 
+
+
 var (
 	styleCheck = cliutil.IconSuccess
 	styleArrow = cliutil.IconArrow
@@ -83,7 +85,7 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		_ = sess.Save(filepath.Join(ws.Root, ".atlas", "sessions"))
 
 		if didStash {
-			fmt.Printf("\n%s Restoring stashed uncommitted changes...\n", styleArrow)
+			cliutil.Info("Restoring stashed uncommitted changes...")
 			popCmd := tools.RunCommand{
 				Command: "git",
 				Args:    []string{"stash", "pop"},

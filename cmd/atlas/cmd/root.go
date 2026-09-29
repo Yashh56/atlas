@@ -104,7 +104,8 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	var path string
 
 	if len(args) == 0 && cmd.Flags().NFlag() == 0 {
-		return cmd.Help()
+		cliutil.PrintWelcome()
+		return nil
 	}
 
 	if len(args) > 0 {
