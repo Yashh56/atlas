@@ -1,73 +1,87 @@
-package cliutil
+﻿package cliutil
 
 import (
 	"fmt"
-	"sync"
 	"time"
+
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-
-// Spinner represents a simple CLI loader.
-type Spinner struct {
+type spinnerModel struct {
+	spinner   spinner.Model
 	message   string
 	startTime time.Time
-	mu        sync.Mutex
-	stop      chan struct{}
-	wg        sync.WaitGroup
+	done      bool
+}
+
+func (m spinnerModel) Init() tea.Cmd {
+	return m.spinner.Tick
+}
+
+func (m spinnerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyCtrlC {
+			return m, tea.Quit
+		}
+	case spinnerUpdateMsg:
+		m.message = string(msg)
+		return m, nil
+	case spinnerStopMsg:
+		m.done = true
+		return m, tea.Quit
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m spinnerModel) View() string {
+	if m.done {
+		return ""
+	}
+	elapsed := time.Since(m.startTime).Seconds()
+	timeStr := StyleMuted.Render(fmt.Sprintf("(%.1fs)", elapsed))
+	return fmt.Sprintf("%s %s %s", m.spinner.View(), StyleBody.Render(m.message), timeStr)
+}
+
+type spinnerUpdateMsg string
+type spinnerStopMsg struct{}
+
+// Spinner represents a CLI loader built on Bubble Tea.
+type Spinner struct {
+	prog *tea.Program
 }
 
 // StartSpinner starts a loader with a message.
 func StartSpinner(message string) *Spinner {
-	s := &Spinner{
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = StylePrimary
+
+	m := spinnerModel{
+		spinner:   s,
 		message:   message,
 		startTime: time.Now(),
-		stop:      make(chan struct{}),
 	}
-	
-	// Print cursor hide
-	fmt.Print("\033[?25l")
-	
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		i := 0
-		for {
-			select {
-			case <-s.stop:
-				return
-			default:
-				s.mu.Lock()
-				msg := s.message
-				s.mu.Unlock()
-				
-				elapsed := time.Since(s.startTime).Seconds()
-				timeStr := StyleSubtext.Render(fmt.Sprintf("(%.1fs)", elapsed))
-				
-				frame := StyleHighlight.Render(spinnerFrames[i%len(spinnerFrames)])
-				fmt.Printf("\r%s %s %s", frame, msg, timeStr)
-				i++
-				time.Sleep(80 * time.Millisecond)
-			}
-		}
-	}()
-	return s
+
+	p := tea.NewProgram(m)
+	go p.Run()
+
+	return &Spinner{prog: p}
 }
 
 // Stop stops the spinner and clears the line.
 func (s *Spinner) Stop() {
-	close(s.stop)
-	s.wg.Wait()
-	// Clear the line and show cursor
-	fmt.Print("\r\033[K\033[?25h")
+	s.prog.Send(spinnerStopMsg{})
+	// Wait a tiny bit for UI to clear
+	time.Sleep(50 * time.Millisecond) 
 }
 
 // UpdateMessage changes the spinner message.
 func (s *Spinner) UpdateMessage(newMessage string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	
-	// Clear the line so longer messages don't leave trailing chars
-	fmt.Print("\r\033[K")
-	s.message = newMessage
+	s.prog.Send(spinnerUpdateMsg(newMessage))
 }
