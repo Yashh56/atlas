@@ -1,58 +1,267 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+
 $Repo = "Yashh56/atlas"
+$ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
 
-Write-Host "Installing Atlas..." -ForegroundColor Cyan
+# ─────────────────────────────────────────────────────────────
+# Atlas Installer
+# ─────────────────────────────────────────────────────────────
 
-# Fetch latest release from GitHub API
-$releaseUrl = "https://api.github.com/repos/$Repo/releases/latest"
-try {
-    $release = Invoke-RestMethod -Uri $releaseUrl
-    $version = $release.tag_name.TrimStart('v')
-} catch {
-    Write-Host "Failed to fetch the latest version. Please check your internet connection." -ForegroundColor Red
+function Write-AtlasHeader {
+    Write-Host ""
+    Write-Host "  Atlas" -ForegroundColor Cyan -NoNewline
+    Write-Host "  —  Autonomous deployment pipeline" -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+function Write-Step {
+    param(
+        [string]$Text
+    )
+
+    Write-Host "  " -NoNewline
+    Write-Host "◆ " -NoNewline -ForegroundColor Cyan
+    Write-Host $Text -ForegroundColor Gray
+}
+
+function Write-Status {
+    param(
+        [ValidateSet("Success", "Error", "Warning", "Info")]
+        [string]$Type,
+
+        [string]$Text
+    )
+
+    $symbol = switch ($Type) {
+        "Success" { "✓" }
+        "Error"   { "✗" }
+        "Warning" { "!" }
+        "Info"    { "→" }
+    }
+
+    $color = switch ($Type) {
+        "Success" { "Green" }
+        "Error"   { "Red" }
+        "Warning" { "Yellow" }
+        "Info"    { "Cyan" }
+    }
+
+    Write-Host "  " -NoNewline
+    Write-Host "$symbol " -NoNewline -ForegroundColor $color
+    Write-Host $Text -ForegroundColor Gray
+}
+
+function Write-InfoLine {
+    param(
+        [string]$Label,
+        [string]$Value
+    )
+
+    Write-Host "  " -NoNewline
+    Write-Host "$Label " -ForegroundColor DarkGray -NoNewline
+    Write-Host $Value -ForegroundColor White
+}
+
+function Write-Failure {
+    param(
+        [string]$Message
+    )
+
+    Write-Host ""
+    Write-Host "  ┌─ Installation failed ──────────────────────────────" -ForegroundColor Red
+    Write-Host "  │" -ForegroundColor Red
+    Write-Host "  │  $Message" -ForegroundColor Gray
+    Write-Host "  │" -ForegroundColor Red
+    Write-Host "  └────────────────────────────────────────────────────" -ForegroundColor Red
+    Write-Host ""
+
     exit 1
 }
 
-# Determine architecture
-$arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x86_64" }
+function Write-SuccessPanel {
+    param(
+        [string]$Version,
+        [string]$InstallPath
+    )
 
-# Find the matching asset from the release (handles any naming convention)
+    Write-Host ""
+    Write-Host "  ┌─ Installation complete ────────────────────────────" -ForegroundColor Green
+    Write-Host "  │" -ForegroundColor Green
+    Write-Host "  │  Atlas " -ForegroundColor Green -NoNewline
+    Write-Host "v$Version" -ForegroundColor White
+    Write-Host "  │" -ForegroundColor Green
+    Write-Host "  │" -ForegroundColor Green
+    Write-Host "  │  Installed to" -ForegroundColor DarkGray
+    Write-Host "  │  $InstallPath" -ForegroundColor White
+    Write-Host "  │" -ForegroundColor Green
+    Write-Host "  │  Restart your terminal, then run:" -ForegroundColor DarkGray
+    Write-Host "  │" -ForegroundColor Green
+    Write-Host "  │  atlas --help" -ForegroundColor Cyan
+    Write-Host "  │" -ForegroundColor Green
+    Write-Host "  └────────────────────────────────────────────────────" -ForegroundColor Green
+    Write-Host ""
+}
+
+# ─────────────────────────────────────────────────────────────
+# Start
+# ─────────────────────────────────────────────────────────────
+
+Write-AtlasHeader
+
+# ─────────────────────────────────────────────────────────────
+# Detect architecture
+# ─────────────────────────────────────────────────────────────
+
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+    "arm64"
+} else {
+    "x86_64"
+}
+
+# ─────────────────────────────────────────────────────────────
+# Fetch latest release
+# ─────────────────────────────────────────────────────────────
+
+Write-Step "Checking latest release..."
+
+try {
+    $release = Invoke-RestMethod `
+        -Uri $ApiUrl `
+        -Method Get `
+        -UseBasicParsing
+
+    $version = $release.tag_name.TrimStart("v")
+} catch {
+    Write-Failure "Unable to fetch the latest Atlas release: $($_.Exception.Message)"
+}
+
 $matchPattern = "Windows.*${arch}.*\.zip$"
-$asset = $release.assets | Where-Object { $_.name -match $matchPattern } | Select-Object -First 1
+
+$asset = $release.assets |
+    Where-Object {
+        $_.name -match $matchPattern
+    } |
+    Select-Object -First 1
 
 if (-not $asset) {
-    Write-Host "Could not find a Windows $arch release asset for v$version." -ForegroundColor Red
-    Write-Host "Available assets:" -ForegroundColor Yellow
-    $release.assets | ForEach-Object { Write-Host "  - $($_.name)" }
-    exit 1
+    Write-Failure "No Windows $arch release asset was found for v$version."
 }
+
+Write-Status "Success" "Latest release found"
+
+Write-Host ""
+Write-InfoLine "Version" "v$version"
+Write-InfoLine "Platform" "Windows / $arch"
+Write-Host ""
+
+# ─────────────────────────────────────────────────────────────
+# Download
+# ─────────────────────────────────────────────────────────────
 
 $fileName = $asset.name
 $downloadUrl = $asset.browser_download_url
-
-Write-Host "Downloading v$version ($arch)..."
-Write-Host "  Asset: $fileName"
 $tempZip = Join-Path $env:TEMP $fileName
 
-Invoke-WebRequest -Uri $downloadUrl -OutFile $tempZip -UseBasicParsing
+Write-Step "Downloading Atlas v$version..."
 
-Write-Host "Extracting..."
+try {
+    Invoke-WebRequest `
+        -Uri $downloadUrl `
+        -OutFile $tempZip `
+        -UseBasicParsing
+} catch {
+    Write-Failure "Download failed: $($_.Exception.Message)"
+}
+
+if (-not (Test-Path $tempZip)) {
+    Write-Failure "Download completed without creating the expected archive."
+}
+
+Write-Status "Success" "Download complete"
+
+# ─────────────────────────────────────────────────────────────
+# Install
+# ─────────────────────────────────────────────────────────────
+
 $installDir = Join-Path $env:LOCALAPPDATA "atlas\bin"
-if (-not (Test-Path $installDir)) {
-    New-Item -ItemType Directory -Path $installDir | Out-Null
+
+Write-Step "Installing Atlas..."
+
+try {
+    if (-not (Test-Path $installDir)) {
+        New-Item `
+            -ItemType Directory `
+            -Path $installDir `
+            -Force | Out-Null
+    }
+
+    Expand-Archive `
+        -Path $tempZip `
+        -DestinationPath $installDir `
+        -Force
+
+    Remove-Item `
+        -Path $tempZip `
+        -Force
+} catch {
+    Write-Failure "Could not install Atlas: $($_.Exception.Message)"
 }
 
-Expand-Archive -Path $tempZip -DestinationPath $installDir -Force
-Remove-Item $tempZip
+Write-Status "Success" "Atlas installed"
 
-# Add to PATH if not already present
+# ─────────────────────────────────────────────────────────────
+# Update PATH
+# ─────────────────────────────────────────────────────────────
+
 $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-if ($userPath -notlike "*$installDir*") {
-    Write-Host "Adding $installDir to your PATH..."
-    [Environment]::SetEnvironmentVariable("PATH", "$userPath;$installDir", "User")
-    $env:PATH = "$env:PATH;$installDir"
+
+if ([string]::IsNullOrWhiteSpace($userPath)) {
+    $pathEntries = @()
+} else {
+    $pathEntries = $userPath -split ";"
 }
 
-Write-Host ""
-Write-Host "Atlas (v${version}) was successfully installed!" -ForegroundColor Green
-Write-Host "Restart your terminal, then run 'atlas --help' to get started."
+$pathExists = $pathEntries |
+    Where-Object {
+        $_.TrimEnd("\") -ieq $installDir.TrimEnd("\")
+    }
+
+if (-not $pathExists) {
+
+    Write-Step "Updating user PATH..."
+
+    try {
+        $newPath = if ([string]::IsNullOrWhiteSpace($userPath)) {
+            $installDir
+        } else {
+            "$userPath;$installDir"
+        }
+
+        [Environment]::SetEnvironmentVariable(
+            "PATH",
+            $newPath,
+            "User"
+        )
+
+        # Make Atlas available in the current PowerShell session.
+        if ($env:PATH -notlike "*$installDir*") {
+            $env:PATH = "$env:PATH;$installDir"
+        }
+
+        Write-Status "Success" "PATH updated"
+    } catch {
+        Write-Failure "Could not update your user PATH: $($_.Exception.Message)"
+    }
+
+} else {
+    Write-Status "Info" "Atlas is already in PATH"
+}
+
+# ─────────────────────────────────────────────────────────────
+# Complete
+# ─────────────────────────────────────────────────────────────
+
+Write-SuccessPanel `
+    -Version $version `
+    -InstallPath $installDir

@@ -1,48 +1,124 @@
 #!/bin/sh
-
 set -e
 
-# Atlas Installer Script
+# Atlas Installer
 #
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Yashh56/atlas/master/install.sh | sh
+# Install latest:
+#   curl -fsSL https://raw.githubusercontent.com/Yashh56/atlas/main/install.sh | sh
 #
-# Install a specific version:
-#   curl -fsSL https://raw.githubusercontent.com/Yashh56/atlas/master/install.sh | VERSION=v0.1.0 sh
+# Install specific version:
+#   curl -fsSL https://raw.githubusercontent.com/Yashh56/atlas/main/install.sh | VERSION=v0.1.0 sh
 
 REPO="Yashh56/atlas"
 PROJECT_NAME="atlas"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 
-# Colors
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-RED='\033[0;31m'
-NC='\033[0m'
+# ─────────────────────────────────────────────────────────────
+# Terminal colors
+# ─────────────────────────────────────────────────────────────
 
-info() {
-    printf "%b%s%b\n" "$BLUE" "$1" "$NC"
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    CYAN="$(printf '\033[36m')"
+    GREEN="$(printf '\033[32m')"
+    RED="$(printf '\033[31m')"
+    YELLOW="$(printf '\033[33m')"
+    GRAY="$(printf '\033[90m')"
+    WHITE="$(printf '\033[37m')"
+    RESET="$(printf '\033[0m')"
+else
+    CYAN=""
+    GREEN=""
+    RED=""
+    YELLOW=""
+    GRAY=""
+    WHITE=""
+    RESET=""
+fi
+
+# ─────────────────────────────────────────────────────────────
+# UI helpers
+# ─────────────────────────────────────────────────────────────
+
+header() {
+    printf "\n"
+    printf "  ${CYAN}Atlas${RESET}"
+    printf "  ${GRAY}—  Autonomous deployment pipeline${RESET}\n"
+    printf "\n"
+}
+
+step() {
+    printf "  ${CYAN}◆${RESET} %s\n" "$1"
 }
 
 success() {
-    printf "%b%s%b\n" "$GREEN" "$1" "$NC"
+    printf "  ${GREEN}✓${RESET} %s\n" "$1"
 }
 
-error() {
-    printf "%b%s%b\n" "$RED" "$1" "$NC" >&2
+info() {
+    printf "  ${CYAN}→${RESET} %s\n" "$1"
 }
 
-info "Installing Atlas..."
+warning() {
+    printf "  ${YELLOW}!${RESET} %s\n" "$1"
+}
 
-# Check required commands
-for command in curl tar; do
+failure() {
+    printf "\n"
+    printf "  ${RED}┌─ Installation failed ──────────────────────────────${RESET}\n"
+    printf "  ${RED}│${RESET}\n"
+    printf "  ${RED}│${RESET}  %s\n" "$1"
+    printf "  ${RED}│${RESET}\n"
+    printf "  ${RED}└────────────────────────────────────────────────────${RESET}\n"
+    printf "\n"
+    exit 1
+}
+
+detail() {
+    printf "  ${GRAY}%-10s${RESET} %s\n" "$1" "$2"
+}
+
+success_panel() {
+    VERSION="$1"
+    INSTALL_PATH="$2"
+
+    printf "\n"
+    printf "  ${GREEN}┌─ Installation complete ────────────────────────────${RESET}\n"
+    printf "  ${GREEN}│${RESET}\n"
+    printf "  ${GREEN}│${RESET}  Atlas ${WHITE}v${VERSION}${RESET}\n"
+    printf "  ${GREEN}│${RESET}\n"
+    printf "  ${GRAY}│${RESET}  Installed to\n"
+    printf "  ${GREEN}│${RESET}  ${WHITE}${INSTALL_PATH}${RESET}\n"
+    printf "  ${GREEN}│${RESET}\n"
+    printf "  ${GRAY}│${RESET}  Run:\n"
+    printf "  ${GREEN}│${RESET}\n"
+    printf "  ${GREEN}│${RESET}  ${CYAN}atlas --help${RESET}\n"
+    printf "  ${GREEN}│${RESET}\n"
+    printf "  ${GREEN}└────────────────────────────────────────────────────${RESET}\n"
+    printf "\n"
+}
+
+# ─────────────────────────────────────────────────────────────
+# Start
+# ─────────────────────────────────────────────────────────────
+
+header
+
+# ─────────────────────────────────────────────────────────────
+# Required commands
+# ─────────────────────────────────────────────────────────────
+
+for command in curl tar install sed awk head uname mktemp basename; do
     if ! command -v "$command" >/dev/null 2>&1; then
-        error "Required command '$command' was not found."
-        exit 1
+        failure "Required command '$command' was not found."
     fi
 done
 
-# Detect OS
+# ─────────────────────────────────────────────────────────────
+# Detect operating system
+# ─────────────────────────────────────────────────────────────
+
+step "Detecting platform..."
+
 OS="$(uname -s)"
 
 case "$OS" in
@@ -53,12 +129,14 @@ case "$OS" in
         OS_NAME="Darwin"
         ;;
     *)
-        error "Unsupported operating system: $OS"
-        exit 1
+        failure "Unsupported operating system: $OS"
         ;;
 esac
 
+# ─────────────────────────────────────────────────────────────
 # Detect architecture
+# ─────────────────────────────────────────────────────────────
+
 ARCH="$(uname -m)"
 
 case "$ARCH" in
@@ -69,63 +147,93 @@ case "$ARCH" in
         ARCH_NAME="arm64"
         ;;
     *)
-        error "Unsupported architecture: $ARCH"
-        exit 1
+        failure "Unsupported architecture: $ARCH"
         ;;
 esac
 
-# Determine version
-if [ -z "${VERSION:-}" ]; then
-    info "Fetching latest Atlas release..."
+success "Platform detected"
 
-    LATEST_TAG="$(
+# ─────────────────────────────────────────────────────────────
+# Determine version
+# ─────────────────────────────────────────────────────────────
+
+if [ -n "${VERSION:-}" ]; then
+    VERSION="${VERSION#v}"
+
+    if [ -z "$VERSION" ]; then
+        failure "Invalid Atlas version."
+    fi
+
+    step "Using Atlas v${VERSION}..."
+else
+    step "Checking latest release..."
+
+    RELEASE_JSON="$(
         curl -fsSL \
             -H "Accept: application/vnd.github+json" \
-            "${GITHUB_API}/releases/latest" |
-        sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' |
-        head -n 1
+            "${GITHUB_API}/releases/latest"
+    )" || failure "Unable to fetch the latest Atlas release."
+
+    LATEST_TAG="$(
+        printf '%s\n' "$RELEASE_JSON" |
+            sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' |
+            head -n 1
     )"
 
     if [ -z "$LATEST_TAG" ]; then
-        error "Failed to determine the latest Atlas release."
-        exit 1
+        failure "Failed to determine the latest Atlas release."
     fi
 
-    VERSION="$LATEST_TAG"
+    VERSION="${LATEST_TAG#v}"
+
+    success "Latest release found"
 fi
 
-# Remove optional v prefix
-VERSION="${VERSION#v}"
+# ─────────────────────────────────────────────────────────────
+# Release information
+# ─────────────────────────────────────────────────────────────
 
-# Validate version
-if [ -z "$VERSION" ]; then
-    error "Invalid Atlas version."
-    exit 1
-fi
+printf "\n"
 
-# Find matching asset from the release API response
-info "Looking for ${OS_NAME} ${ARCH_NAME} release asset..."
+detail "Version" "v${VERSION}"
+detail "Platform" "${OS_NAME} / ${ARCH_NAME}"
 
-RELEASE_JSON="$(curl -fsSL -H "Accept: application/vnd.github+json" "${GITHUB_API}/releases/tags/v${VERSION}")"
+printf "\n"
+
+# ─────────────────────────────────────────────────────────────
+# Fetch release metadata
+# ─────────────────────────────────────────────────────────────
+
+step "Finding release asset..."
+
+RELEASE_JSON="$(
+    curl -fsSL \
+        -H "Accept: application/vnd.github+json" \
+        "${GITHUB_API}/releases/tags/v${VERSION}"
+)" || failure "Unable to fetch Atlas v${VERSION}."
 
 DOWNLOAD_URL="$(
-    echo "$RELEASE_JSON" |
-    sed -n 's/.*"browser_download_url": *"\([^"]*'"${OS_NAME}"'[^"]*'"${ARCH_NAME}"'[^"]*\.tar\.gz\)".*/\1/p' |
-    head -n 1
+    printf '%s\n' "$RELEASE_JSON" |
+        grep '"browser_download_url"' |
+        grep "${OS_NAME}" |
+        grep "${ARCH_NAME}" |
+        grep '\.tar\.gz"' |
+        sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' |
+        head -n 1
 )"
 
 if [ -z "$DOWNLOAD_URL" ]; then
-    error "Could not find a ${OS_NAME} ${ARCH_NAME} tar.gz asset for v${VERSION}."
-    exit 1
+    failure "No ${OS_NAME} ${ARCH_NAME} release asset was found for v${VERSION}."
 fi
 
 FILE_NAME="$(basename "$DOWNLOAD_URL")"
-CHECKSUM_URL="https://github.com/${REPO}/releases/download/v${VERSION}/checksums.txt"
 
-info "Version: v${VERSION}"
-info "Platform: ${OS_NAME}/${ARCH_NAME}"
+success "Release asset found"
 
-# Create temporary directory
+# ─────────────────────────────────────────────────────────────
+# Temporary directory
+# ─────────────────────────────────────────────────────────────
+
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -137,33 +245,55 @@ trap cleanup EXIT INT TERM
 ARCHIVE_PATH="${TMP_DIR}/${FILE_NAME}"
 CHECKSUM_PATH="${TMP_DIR}/checksums.txt"
 
+# ─────────────────────────────────────────────────────────────
 # Download archive
-info "Downloading ${FILE_NAME}..."
+# ─────────────────────────────────────────────────────────────
 
-if ! curl -fsSL "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"; then
-    error "Failed to download Atlas."
-    error "URL: ${DOWNLOAD_URL}"
-    exit 1
+step "Downloading Atlas v${VERSION}..."
+
+if ! curl -fsSL \
+    "$DOWNLOAD_URL" \
+    -o "$ARCHIVE_PATH"; then
+
+    failure "Failed to download Atlas."
 fi
 
+success "Download complete"
+
+# ─────────────────────────────────────────────────────────────
 # Download checksums
-info "Downloading checksums..."
+# ─────────────────────────────────────────────────────────────
 
-if ! curl -fsSL "$CHECKSUM_URL" -o "$CHECKSUM_PATH"; then
-    error "Failed to download checksums."
-    exit 1
+step "Downloading checksums..."
+
+CHECKSUM_URL="https://github.com/${REPO}/releases/download/v${VERSION}/checksums.txt"
+
+if ! curl -fsSL \
+    "$CHECKSUM_URL" \
+    -o "$CHECKSUM_PATH"; then
+
+    failure "Failed to download release checksums."
 fi
 
+success "Checksums downloaded"
+
+# ─────────────────────────────────────────────────────────────
 # Verify checksum
-info "Verifying checksum..."
+# ─────────────────────────────────────────────────────────────
+
+step "Verifying download..."
 
 EXPECTED_CHECKSUM="$(
-    sed -n "s/^.*  ${FILE_NAME}$/\1/p" "$CHECKSUM_PATH"
+    awk -v file="$FILE_NAME" '
+        $2 == file {
+            print $1
+            exit
+        }
+    ' "$CHECKSUM_PATH"
 )"
 
 if [ -z "$EXPECTED_CHECKSUM" ]; then
-    error "Could not find checksum for ${FILE_NAME}."
-    exit 1
+    failure "No checksum was found for ${FILE_NAME}."
 fi
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -171,32 +301,37 @@ if command -v sha256sum >/dev/null 2>&1; then
 elif command -v shasum >/dev/null 2>&1; then
     ACTUAL_CHECKSUM="$(shasum -a 256 "$ARCHIVE_PATH" | awk '{print $1}')"
 else
-    error "Neither sha256sum nor shasum is available."
-    exit 1
+    failure "Neither sha256sum nor shasum is available."
 fi
 
 if [ "$EXPECTED_CHECKSUM" != "$ACTUAL_CHECKSUM" ]; then
-    error "Checksum verification failed."
-    error "Expected: ${EXPECTED_CHECKSUM}"
-    error "Actual:   ${ACTUAL_CHECKSUM}"
-    exit 1
+    failure "Checksum verification failed."
 fi
 
-success "Checksum verified."
+success "Download verified"
 
+# ─────────────────────────────────────────────────────────────
 # Extract
-info "Extracting..."
+# ─────────────────────────────────────────────────────────────
 
-tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
+step "Preparing Atlas..."
+
+if ! tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"; then
+    failure "Failed to extract the Atlas archive."
+fi
 
 BINARY_PATH="${TMP_DIR}/${PROJECT_NAME}"
 
 if [ ! -f "$BINARY_PATH" ]; then
-    error "Atlas binary was not found in the downloaded archive."
-    exit 1
+    failure "Atlas binary was not found in the downloaded archive."
 fi
 
+success "Archive extracted"
+
+# ─────────────────────────────────────────────────────────────
 # Determine installation directory
+# ─────────────────────────────────────────────────────────────
+
 INSTALL_DIR="/usr/local/bin"
 
 if [ -w "$INSTALL_DIR" ]; then
@@ -205,18 +340,30 @@ else
     if command -v sudo >/dev/null 2>&1; then
         SUDO="sudo"
     else
-        error "Cannot write to ${INSTALL_DIR} and sudo is not available."
-        error "Please install Atlas manually or run this script with appropriate permissions."
-        exit 1
+        failure "Cannot write to ${INSTALL_DIR} and sudo is not available."
     fi
 fi
 
-# Install binary
-info "Installing Atlas to ${INSTALL_DIR}..."
+# ─────────────────────────────────────────────────────────────
+# Install
+# ─────────────────────────────────────────────────────────────
 
-$SUDO install -m 755 "$BINARY_PATH" "${INSTALL_DIR}/${PROJECT_NAME}"
+step "Installing Atlas..."
 
-success "Atlas v${VERSION} was successfully installed!"
-echo ""
-echo "Run:"
-echo "  atlas --help"
+if ! $SUDO install \
+    -m 755 \
+    "$BINARY_PATH" \
+    "${INSTALL_DIR}/${PROJECT_NAME}"; then
+
+    failure "Could not install Atlas to ${INSTALL_DIR}."
+fi
+
+success "Atlas installed"
+
+# ─────────────────────────────────────────────────────────────
+# Complete
+# ─────────────────────────────────────────────────────────────
+
+success_panel \
+    "$VERSION" \
+    "${INSTALL_DIR}/${PROJECT_NAME}"
