@@ -11,9 +11,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/Yashh56/atlas/internal/orchestrator"
-	"github.com/Yashh56/atlas/internal/version"
 	"github.com/Yashh56/atlas/internal/cliutil"
+	"github.com/Yashh56/atlas/internal/orchestrator"
+	"github.com/Yashh56/atlas/internal/updater"
+	"github.com/Yashh56/atlas/internal/version"
 )
 
 var (
@@ -45,9 +46,29 @@ var rootCmd = &cobra.Command{
 	Version:      version.Version,
 }
 
+var latestRelease *updater.Release
+
 // Execute is the entry point called from main.
 func Execute() error {
-	return rootCmd.Execute()
+	isUpdateCmd := len(os.Args) > 1 && os.Args[1] == "update"
+
+	if !isUpdateCmd {
+		go func() {
+			rel, _ := updater.CheckUpdate(version.Version)
+			if rel != nil {
+				latestRelease = rel
+			}
+		}()
+	}
+
+	err := rootCmd.Execute()
+
+	if latestRelease != nil && !isUpdateCmd {
+		fmt.Printf("\n%s A new version of Atlas is available: %s -> %s\n", cliutil.StyleHighlight.Render("UPDATE:"), version.Version, latestRelease.TagName)
+		fmt.Printf("Run %s to update.\n\n", cliutil.StylePrompt.Render("atlas update"))
+	}
+
+	return err
 }
 
 func init() {
