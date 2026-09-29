@@ -2,5 +2,15 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "pnpm build",
   "framework": null,
-  "outputDirectory": "dist/client"
+  "outputDirectory": "dist/client",
+  "rewrites": [
+    {
+      "source": "/install.sh",
+      "destination": "https://raw.githubusercontent.com/Yashh56/atlas/master/install.sh"
+    },
+    {
+      "source": "/install.ps1",
+      "destination": "https://raw.githubusercontent.com/Yashh56/atlas/master/install.ps1"
+    }
+  ]
 }

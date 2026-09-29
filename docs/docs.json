@@ -12,7 +12,10 @@
     }
   ],
   "contextual": {
-    "options": ["copy", "view"]
+    "options": [
+      "copy",
+      "view"
+    ]
   },
   "navbar": {
     "links": [
@@ -30,10 +33,9 @@
   },
   "search": {
     "prompt": "Search the docs...",
-    "provider":"pagefind",
+    "provider": "pagefind",
     "shortcut": "k",
     "shortcutLabel": "Ctrl K"
-  
   },
   "navigation": {
     "groups": [
@@ -41,7 +43,10 @@
         "group": "Getting started",
         "collapsible": false,
         "pages": [
-          { "page": "index", "title": "Introduction" },
+          {
+            "page": "index",
+            "title": "Introduction"
+          },
           "getting-started",
           "commands"
         ]
@@ -49,21 +54,39 @@
       {
         "group": "Guides",
         "collapsible": true,
-        "pages": ["react-guide", "nextjs-guide", "express-guide", "django-guide"]
+        "pages": [
+          "react-guide",
+          "nextjs-guide",
+          "express-guide",
+          "django-guide"
+        ]
       },
       {
         "group": "Providers",
         "collapsible": true,
         "pages": [
-          { "page": "providers/netlify", "title": "Netlify" },
-          { "page": "providers/render", "title": "Render" },
-          { "page": "providers/vercel", "title": "Vercel" }
+          {
+            "page": "providers/netlify",
+            "title": "Netlify"
+          },
+          {
+            "page": "providers/render",
+            "title": "Render"
+          },
+          {
+            "page": "providers/vercel",
+            "title": "Vercel"
+          }
         ]
       },
       {
         "group": "Internals",
         "collapsible": true,
-        "pages": ["architecture", "credentials-auth", "state-management"]
+        "pages": [
+          "architecture",
+          "credentials-auth",
+          "state-management"
+        ]
       }
     ]
   }
