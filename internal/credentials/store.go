@@ -236,6 +236,7 @@ func isKeychainUnavailable(err error) bool {
 		"secret service",
 		"could not connect",
 		"keychain",
+		"org.freedesktop.secrets",
 	} {
 		if containsFold(msg, s) {
 			return true

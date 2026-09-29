@@ -219,15 +219,18 @@ try {
 Write-Status "Success" "Atlas installed"
 
 # -------------------------------------------------------------
-# Update PATH
+# Update User PATH
 # -------------------------------------------------------------
 
-$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 
 if ([string]::IsNullOrWhiteSpace($userPath)) {
     $pathEntries = @()
 } else {
-    $pathEntries = $userPath -split ";"
+    $pathEntries = $userPath -split ";" |
+        Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        }
 }
 
 $pathExists = $pathEntries |
@@ -240,22 +243,13 @@ if (-not $pathExists) {
     Write-Step "Updating user PATH..."
 
     try {
-        $newPath = if ([string]::IsNullOrWhiteSpace($userPath)) {
-            $installDir
-        } else {
-            "$userPath;$installDir"
-        }
+        $pathEntries += $installDir
 
         [Environment]::SetEnvironmentVariable(
-            "PATH",
-            $newPath,
+            "Path",
+            ($pathEntries -join ";"),
             "User"
         )
-
-        # Make Atlas available in the current PowerShell session.
-        if ($env:PATH -notlike "*$installDir*") {
-            $env:PATH = "$env:PATH;$installDir"
-        }
 
         Write-Status "Success" "PATH updated"
     } catch {
@@ -264,6 +258,24 @@ if (-not $pathExists) {
 
 } else {
     Write-Status "Info" "Atlas is already in PATH"
+}
+
+# -------------------------------------------------------------
+# Update Current PowerShell Session
+# -------------------------------------------------------------
+
+$currentPathEntries = $env:Path -split ";" |
+    Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    }
+
+$currentPathExists = $currentPathEntries |
+    Where-Object {
+        $_.TrimEnd("\") -ieq $installDir.TrimEnd("\")
+    }
+
+if (-not $currentPathExists) {
+    $env:Path = (($currentPathEntries + $installDir) -join ";")
 }
 
 # -------------------------------------------------------------
