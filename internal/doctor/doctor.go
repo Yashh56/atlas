@@ -45,6 +45,8 @@ type DiagnosticReport struct {
 	Categories []CategoryReport `json:"categories"`
 }
 
+var newLLMClient = llm.NewClient
+
 func title(s string) string {
 	if s == "" {
 		return ""
@@ -112,9 +114,15 @@ func checkTools(ctx context.Context, workspaceRoot string) CategoryReport {
 
 	// Python
 	pyCheck := checkOptionalExecutable(ctx, "python", "--version")
-	if pyCheck.Status != StatusPass && runtime.GOOS != "windows" {
-		pyCheck = checkOptionalExecutable(ctx, "python3", "--version")
+	if pyCheck.Status != StatusPass {
+		if runtime.GOOS == "windows" {
+			pyCheck = checkOptionalExecutable(ctx, "py", "--version")
+		}
+		if pyCheck.Status != StatusPass {
+			pyCheck = checkOptionalExecutable(ctx, "python3", "--version")
+		}
 	}
+	pyCheck.Name = "Python"
 	cat.Checks = append(cat.Checks, pyCheck)
 
 	// Docker
@@ -194,21 +202,53 @@ func checkLLM(ctx context.Context, workspaceRoot string) CategoryReport {
 	cat := CategoryReport{Category: "LLM Configuration"}
 
 	cfgPath := filepath.Join(workspaceRoot, ".atlas", "config.json")
+	hasConfig := true
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		hasConfig = false
+	}
+
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		cfg = &config.Config{
 			LLMProvider:  "anthropic",
-			DefaultModel: "claude-sonnet-5",
+			DefaultModel: "",
 		}
 	}
 
 	store, _ := credentials.Open()
+
+	if !hasConfig || !llm.HasProviderKey(cfg.LLMProvider, store) {
+		if detected, ok := llm.DetectConfiguredProvider(cfg.LLMProvider, store); ok {
+			cfg.LLMProvider = detected.Name
+			if cfg.DefaultModel == "" {
+				cfg.DefaultModel = detected.DefaultModel
+			}
+		}
+	}
+
+	displayModel := cfg.DefaultModel
+	if displayModel == "" {
+		for _, p := range llm.KnownProviders {
+			if p.Name == cfg.LLMProvider {
+				displayModel = p.DefaultModel
+				break
+			}
+		}
+	}
+
 	item := CheckItem{
-		Name:    fmt.Sprintf("Model (%s)", cfg.DefaultModel),
+		Name:    fmt.Sprintf("Model (%s)", displayModel),
 		Details: fmt.Sprintf("Provider: %s", cfg.LLMProvider),
 	}
 
-	client, err := llm.NewClient(cfg, store)
+	if !llm.HasProviderKey(cfg.LLMProvider, store) && cfg.LLMProvider != "local" {
+		item.Status = StatusWarn
+		item.Error = "No API key configured — set MISTRAL_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, etc. or run atlas models set <provider>"
+		cat.Checks = append(cat.Checks, item)
+		return cat
+	}
+
+	client, err := newLLMClient(cfg, store)
 	if err != nil {
 		item.Status = StatusWarn
 		item.Error = fmt.Sprintf("Client initialization failed: %v", err)
@@ -229,7 +269,7 @@ func checkLLM(ctx context.Context, workspaceRoot string) CategoryReport {
 	} else {
 		item.Status = StatusPass
 		item.LatencyMs = latency
-		item.Details = fmt.Sprintf("Connected (latency: %dms)", latency)
+		item.Details = fmt.Sprintf("Provider: %s — Connected (latency: %dms)", cfg.LLMProvider, latency)
 	}
 
 	cat.Checks = append(cat.Checks, item)
@@ -281,7 +321,7 @@ func checkExecutable(ctx context.Context, name string, args ...string) CheckItem
 	return item
 }
 
-func checkOptionalExecutable(ctx context.Context, name string, args ...string) CheckItem {
+var checkOptionalExecutable = func(ctx context.Context, name string, args ...string) CheckItem {
 	item := CheckItem{Name: title(name)}
 	cmd := exec.CommandContext(ctx, name, args...)
 	out, err := cmd.Output()

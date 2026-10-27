@@ -34,6 +34,59 @@ import (
 // structured output (FixCode) can use it directly with GenerateStructured.
 type Model = provider.LanguageModel
 
+type ProviderSpec struct {
+	Name         string
+	EnvVar       string
+	DefaultModel string
+	Models       []string
+}
+
+var KnownProviders = []ProviderSpec{
+	{Name: "anthropic", EnvVar: "ANTHROPIC_API_KEY", DefaultModel: "claude-sonnet-5", Models: []string{"claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"}},
+	{Name: "openai", EnvVar: "OPENAI_API_KEY", DefaultModel: "gpt-5.6-sol", Models: []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}},
+	{Name: "gemini", EnvVar: "GEMINI_API_KEY", DefaultModel: "gemini-3.5-flash", Models: []string{"gemini-3.5-flash", "gemini-3.1-pro"}},
+	{Name: "mistral", EnvVar: "MISTRAL_API_KEY", DefaultModel: "mistral-small-latest", Models: []string{"mistral-small-latest", "mistral-large-latest", "codestral-latest"}},
+	{Name: "groq", EnvVar: "GROQ_API_KEY", DefaultModel: "openai/gpt-oss-120b", Models: []string{"openai/gpt-oss-120b", "openai/gpt-oss-20b"}},
+	{Name: "grok", EnvVar: "XAI_API_KEY", DefaultModel: "grok-4.5", Models: []string{"grok-4.5", "grok-4.3"}},
+	{Name: "local", EnvVar: "", DefaultModel: "llama3", Models: []string{}},
+}
+
+func HasProviderKey(provider string, store *credentials.Store) bool {
+	for _, p := range KnownProviders {
+		if p.Name == provider {
+			if p.EnvVar != "" && os.Getenv(p.EnvVar) != "" {
+				return true
+			}
+			if store != nil {
+				if secret, err := store.GetSecret("llm:" + provider); err == nil && secret != "" {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return false
+}
+
+func DetectConfiguredProvider(requestedProvider string, store *credentials.Store) (ProviderSpec, bool) {
+	if requestedProvider != "" && requestedProvider != "anthropic" && HasProviderKey(requestedProvider, store) {
+		for _, p := range KnownProviders {
+			if p.Name == requestedProvider {
+				return p, true
+			}
+		}
+	}
+	if requestedProvider == "anthropic" && HasProviderKey("anthropic", store) {
+		return KnownProviders[0], true
+	}
+	for _, p := range KnownProviders {
+		if p.Name != "local" && HasProviderKey(p.Name, store) {
+			return p, true
+		}
+	}
+	return ProviderSpec{}, false
+}
+
 // resolveAPIKey tries env vars first, then the credential store.
 func resolveAPIKey(store *credentials.Store, provider, envVar string) (string, error) {
 	if v := os.Getenv(envVar); v != "" {
@@ -78,6 +131,13 @@ func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 
 	if modelName == "" {
 		modelName = "claude-sonnet-5" // default when no provider configured
+	}
+
+	if (modelName == "claude-sonnet-5" || cfg.LLMProvider == "anthropic" || cfg.LLMProvider == "") && !HasProviderKey("anthropic", store) {
+		if detected, ok := DetectConfiguredProvider("", store); ok {
+			cfg.LLMProvider = detected.Name
+			modelName = detected.DefaultModel
+		}
 	}
 
 	// Match by prefix or explicit name

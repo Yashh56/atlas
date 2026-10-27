@@ -124,3 +124,99 @@ func TestResolveModel_WithStore(t *testing.T) {
 		t.Errorf("expected MISTRAL_API_KEY to be set to %q process-locally, got %q", "stored-mistral-key", got)
 	}
 }
+
+func TestHasProviderKey(t *testing.T) {
+	t.Setenv("MISTRAL_API_KEY", "mistral-val")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	os.Unsetenv("ANTHROPIC_API_KEY")
+
+	if !llm.HasProviderKey("mistral", nil) {
+		t.Errorf("expected HasProviderKey('mistral') to be true")
+	}
+	if llm.HasProviderKey("anthropic", nil) {
+		t.Errorf("expected HasProviderKey('anthropic') to be false")
+	}
+	if llm.HasProviderKey("unknown", nil) {
+		t.Errorf("expected HasProviderKey('unknown') to be false")
+	}
+	if llm.HasProviderKey("local", nil) {
+		t.Errorf("expected HasProviderKey('local') to be false")
+	}
+
+	// Test with credentials store
+	store, err := credentials.OpenWithDir(t.TempDir())
+	if err != nil {
+		t.Fatalf("opening credentials store: %v", err)
+	}
+	if err := store.SetSecret("llm:openai", "store-openai-key"); err != nil {
+		t.Fatalf("setting secret: %v", err)
+	}
+	defer store.DeleteSecret("llm:openai")
+	t.Setenv("OPENAI_API_KEY", "")
+	os.Unsetenv("OPENAI_API_KEY")
+
+	if !llm.HasProviderKey("openai", store) {
+		t.Errorf("expected HasProviderKey('openai') to be true with store")
+	}
+}
+
+func TestDetectConfiguredProvider(t *testing.T) {
+	for _, p := range llm.KnownProviders {
+		if p.EnvVar != "" {
+			t.Setenv(p.EnvVar, "")
+			os.Unsetenv(p.EnvVar)
+		}
+	}
+
+	// 1. None configured
+	if _, ok := llm.DetectConfiguredProvider("", nil); ok {
+		t.Errorf("expected false when no provider configured")
+	}
+
+	// 2. Mistral configured in env
+	t.Setenv("MISTRAL_API_KEY", "mistral-key")
+	spec, ok := llm.DetectConfiguredProvider("", nil)
+	if !ok || spec.Name != "mistral" {
+		t.Errorf("expected mistral to be detected, got ok=%v, spec=%+v", ok, spec)
+	}
+
+	// When requestedProvider is "anthropic" (unconfigured), fallback to mistral
+	spec, ok = llm.DetectConfiguredProvider("anthropic", nil)
+	if !ok || spec.Name != "mistral" {
+		t.Errorf("expected mistral fallback for unconfigured anthropic, got ok=%v, spec=%+v", ok, spec)
+	}
+
+	// 3. Anthropic configured
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key")
+	spec, ok = llm.DetectConfiguredProvider("anthropic", nil)
+	if !ok || spec.Name != "anthropic" {
+		t.Errorf("expected anthropic when anthropic key is set, got ok=%v, spec=%+v", ok, spec)
+	}
+}
+
+func TestResolveModel_AutoFallback(t *testing.T) {
+	for _, p := range llm.KnownProviders {
+		if p.EnvVar != "" {
+			t.Setenv(p.EnvVar, "")
+			os.Unsetenv(p.EnvVar)
+		}
+	}
+
+	t.Setenv("MISTRAL_API_KEY", "mistral-key")
+
+	// Default config (anthropic) should fallback to mistral
+	cfg := &config.Config{
+		LLMProvider:  "anthropic",
+		DefaultModel: "claude-sonnet-5",
+	}
+	model, err := llm.ResolveModel(cfg, nil)
+	if err != nil {
+		t.Fatalf("ResolveModel unexpected error: %v", err)
+	}
+	if cfg.LLMProvider != "mistral" {
+		t.Errorf("expected cfg.LLMProvider to be updated to 'mistral', got %q", cfg.LLMProvider)
+	}
+	if model.ModelID() != "mistral-small-latest" && model.ModelID() != "mistral-large-latest" && model.ModelID() != "mistral-medium-3.5" {
+		t.Errorf("expected mistral model, got %q", model.ModelID())
+	}
+}

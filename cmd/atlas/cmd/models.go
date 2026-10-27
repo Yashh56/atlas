@@ -17,19 +17,7 @@ import (
 )
 
 // llmProviderEnvVars maps each GoAI provider name to its expected API key env var.
-var llmProviderEnvVars = []struct {
-	Name   string
-	EnvVar string
-	Models []string
-}{
-	{"anthropic", "ANTHROPIC_API_KEY", []string{"claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"}},
-	{"openai", "OPENAI_API_KEY", []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}},
-	{"gemini", "GEMINI_API_KEY", []string{"gemini-3.5-flash", "gemini-3.1-pro"}},
-	{"mistral", "MISTRAL_API_KEY", []string{"mistral-large-latest", "mistral-small-latest"}}, // auto-updating aliases
-	{"groq", "GROQ_API_KEY", []string{"openai/gpt-oss-120b", "openai/gpt-oss-20b"}},
-	{"grok", "XAI_API_KEY", []string{"grok-4.5", "grok-4.3"}},
-	{"local", "", []string{}}, // local models are discovered, not guessed — see NewModelLister
-}
+var llmProviderEnvVars = llm.KnownProviders
 
 var promptSecret = cliutil.PromptSecret
 var openCredentials = credentials.Open
