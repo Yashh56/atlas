@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,12 +51,13 @@ func (a Action) IsDeploy() bool {
 
 // RunOptions carries per-invocation flags from the CLI into the pipeline.
 type RunOptions struct {
-	AllowDirty    bool
-	ModelOverride string
-	Action        Action
-	IsInteractive bool
-	OutputDir     string
-	AutoRollback  bool
+	AllowDirty     bool
+	ModelOverride  string
+	Action         Action
+	IsInteractive  bool
+	NonInteractive bool
+	OutputDir      string
+	AutoRollback   bool
 }
 
 // Run executes the full Atlas pipeline by dispatching to modular steps.
@@ -418,12 +421,52 @@ func executeAnalyzeAndValidate(
 	return commitSHA, framework, packageManager, false, nil
 }
 
+// NormalizeErrorSignature computes a deterministic hash of the normalized error log.
+// It trims whitespace to identify identical failure signatures across patch cycles.
+func NormalizeErrorSignature(raw string) string {
+	lines := strings.Split(strings.TrimSpace(raw), "\n")
+	if len(lines) > 40 {
+		lines = lines[len(lines)-40:]
+	}
+	var cleaned []string
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "" {
+			continue
+		}
+		cleaned = append(cleaned, trimmed)
+	}
+	joined := strings.Join(cleaned, "\n")
+	h := sha256.Sum256([]byte(joined))
+	return hex.EncodeToString(h[:])
+}
+
+// revertBackups restores any files snapshotted in the session backups directory.
+func revertBackups(wsRoot, sessDir string) {
+	backupDir := filepath.Join(sessDir, "backups")
+	if _, err := os.Stat(backupDir); err == nil {
+		filepath.Walk(backupDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			rel, _ := filepath.Rel(backupDir, path)
+			targetPath := filepath.Join(wsRoot, rel)
+			bytes, err := os.ReadFile(path)
+			if err == nil {
+				_ = os.WriteFile(targetPath, bytes, info.Mode())
+			}
+			return nil
+		})
+	}
+}
+
 func executeBuildLoop(
 	ctx context.Context, ws *workspace.Workspace, sess *session.Session, sessDir string,
 	planner *PlannerState, llmModel llm.Model, commitSHA *string, framework, packageManager, providerName string, opts RunOptions,
 ) error {
 	buildSuccess := false
-	var lastErrorMsg string
+	var prevBuildErrorSig string
+	var patchApplied bool
 	stuckCount := 0
 	llmFixAttempts := 0         // total LLM calls made (capped separately from build attempts)
 	const maxLLMFixes = 30      // hard ceiling on LLM invocations regardless of build count
@@ -617,23 +660,26 @@ func executeBuildLoop(
 			}
 		}
 
-		if errorMsg != "" && errorMsg == lastErrorMsg {
+		currentSig := NormalizeErrorSignature(errorMsg)
+
+		if patchApplied && currentSig != "" && currentSig == prevBuildErrorSig {
 			stuckCount++
-		} else {
-			// Error changed — the last fix made progress. Reset the build retry counter
-			// so we don't exhaust attempts while making forward progress.
-			if lastErrorMsg != "" {
+			fmt.Printf("%s Build error unchanged after patch (stuck loop detected). Reverting and escalating...\n", styleWarn)
+			revertBackups(ws.Root, sessDir)
+			planner.CurrentStep = "escalated"
+			_ = SavePlanner(sessDir, planner)
+			return fmt.Errorf("build error unchanged after patch (stuck loop detected). reverted using file snapshots")
+		}
+
+		if currentSig != prevBuildErrorSig {
+			prevBuildErrorSig = currentSig
+			stuckCount = 0
+			if retry.Count > 1 {
 				retry.Count = 1
 				planner.Retries["fix_and_rebuild"] = retry
 			}
-			stuckCount = 0
 		}
-		lastErrorMsg = errorMsg
-
-		if stuckCount >= 2 {
-			fmt.Printf("%s Stuck loop detected (same error %d times in a row). Escalating...\n", styleWarn, stuckCount+1)
-			retry.Count = retry.Max + 1 // Force exhaustion
-		}
+		patchApplied = false
 
 		step := "run_build_command"
 		now := time.Now().UTC()
@@ -649,24 +695,7 @@ func executeBuildLoop(
 
 		if retry.Count >= retry.Max {
 			fmt.Printf("%s Exhausted retries. Escalating and reverting changes...\n", styleArrow)
-
-			// Restore from backups instead of git checkout
-			backupDir := filepath.Join(sessDir, "backups")
-			if _, err := os.Stat(backupDir); err == nil {
-				filepath.Walk(backupDir, func(path string, info os.FileInfo, err error) error {
-					if err != nil || info.IsDir() {
-						return nil
-					}
-					rel, _ := filepath.Rel(backupDir, path)
-					targetPath := filepath.Join(ws.Root, rel)
-					bytes, err := os.ReadFile(path)
-					if err == nil {
-						_ = os.WriteFile(targetPath, bytes, info.Mode())
-					}
-					return nil
-				})
-			}
-
+			revertBackups(ws.Root, sessDir)
 			planner.CurrentStep = "escalated"
 			_ = SavePlanner(sessDir, planner)
 			return fmt.Errorf("build failed and exhausted fix attempts. reverted using file snapshots")
@@ -700,6 +729,7 @@ func executeBuildLoop(
 				// Patch applied — record the file and break to rebuild
 				forceIncludeFile = fixRes.TargetFile
 				lastPatchError = ""
+				patchApplied = true
 				fmt.Printf("  %s\n\n", fixRes.Output)
 				planner.Completed = append(planner.Completed, "fix_code")
 				_ = SavePlanner(sessDir, planner)
@@ -768,7 +798,13 @@ func executeDeploy(
 	ctx context.Context, ws *workspace.Workspace, sessDir string, planner *PlannerState,
 	cfg *config.Config, dep *DeploymentState, provider deploy.Provider, providerName string, opts RunOptions,
 ) error {
-	approved := CheckApproval(cfg, dep, os.Stdin, os.Stdout)
+	var approved bool
+	if opts.NonInteractive {
+		AutoApprove(dep, "non-interactive")
+		approved = true
+	} else {
+		approved = CheckApproval(cfg, dep, os.Stdin, os.Stdout)
+	}
 	if !approved {
 		fmt.Println("\nDeployment cancelled by user.")
 		return nil

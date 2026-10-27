@@ -126,3 +126,20 @@ func TestDeploymentState_RoundTrip(t *testing.T) {
 		t.Errorf("HealthCheck.MaxAttempts mismatch: got %d, want 3", loaded.HealthCheck.MaxAttempts)
 	}
 }
+
+func TestNormalizeErrorSignature(t *testing.T) {
+	err1 := "main.go:5:10: undefined: Foo\nexit status 1"
+	err2 := "  main.go:5:10: undefined: Foo \n\n exit status 1\n"
+	err3 := "main.go:6:12: syntax error\nexit status 1"
+
+	sig1 := orchestrator.NormalizeErrorSignature(err1)
+	sig2 := orchestrator.NormalizeErrorSignature(err2)
+	sig3 := orchestrator.NormalizeErrorSignature(err3)
+
+	if sig1 != sig2 {
+		t.Errorf("expected trimmed error signatures to match: %q != %q", sig1, sig2)
+	}
+	if sig1 == sig3 {
+		t.Errorf("expected different errors to have different signatures: %q == %q", sig1, sig3)
+	}
+}

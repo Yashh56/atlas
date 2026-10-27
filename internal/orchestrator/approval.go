@@ -13,17 +13,20 @@ import (
 	"os"
 )
 
+// AutoApprove marks the deployment approved without prompting.
+func AutoApprove(dep *DeploymentState, approver string) {
+	now := time.Now().UTC()
+	dep.Approval.Required = false
+	dep.Approval.ApprovedBy = &approver
+	dep.Approval.ApprovedAt = &now
+}
+
 // CheckApproval determines if a deployment is approved based on config.
-// If config.Approval is "manual", it prompts the user on stdout/stdin.
 // If config.Approval is "auto", it approves immediately.
 // Returns true if approved, false if declined.
 func CheckApproval(cfg *config.Config, dep *DeploymentState, in io.Reader, out io.Writer) bool {
 	if cfg.Approval == "auto" {
-		now := time.Now().UTC()
-		user := "auto"
-		dep.Approval.Required = false
-		dep.Approval.ApprovedBy = &user
-		dep.Approval.ApprovedAt = &now
+		AutoApprove(dep, "auto")
 		return true
 	}
 
