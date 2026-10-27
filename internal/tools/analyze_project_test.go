@@ -135,6 +135,69 @@ go 1.22
 			wantPM:        ptr("pip"),
 			wantDocker:    false,
 		},
+		{
+			name: "astro with bun",
+			setup: func(dir string) {
+				writeFixture(t, dir, "package.json", `{
+					"dependencies": {"astro": "4.0.0"},
+					"devDependencies": {}
+				}`)
+				writeFixture(t, dir, "bun.lockb", ``)
+			},
+			wantFramework: ptr("astro"),
+			wantLanguage:  ptr("javascript"),
+			wantPM:        ptr("bun"),
+			wantDocker:    false,
+		},
+		{
+			name: "sveltekit with npm",
+			setup: func(dir string) {
+				writeFixture(t, dir, "package.json", `{
+					"dependencies": {"@sveltejs/kit": "2.0.0"},
+					"devDependencies": {}
+				}`)
+			},
+			wantFramework: ptr("sveltekit"),
+			wantLanguage:  ptr("javascript"),
+			wantPM:        ptr("npm"),
+			wantDocker:    false,
+		},
+		{
+			name: "vue with vite",
+			setup: func(dir string) {
+				writeFixture(t, dir, "package.json", `{
+					"dependencies": {"vue": "3.4.0", "vite": "5.0.0"},
+					"devDependencies": {}
+				}`)
+			},
+			wantFramework: ptr("vue"),
+			wantLanguage:  ptr("javascript"),
+			wantPM:        ptr("npm"),
+			wantDocker:    false,
+		},
+		{
+			name: "python with uv",
+			setup: func(dir string) {
+				writeFixture(t, dir, "pyproject.toml", `[project]
+name = "myapp"
+`)
+				writeFixture(t, dir, "uv.lock", ``)
+			},
+			wantFramework: ptr("python"),
+			wantLanguage:  ptr("python"),
+			wantPM:        ptr("uv"),
+			wantDocker:    false,
+		},
+		{
+			name: "python with poetry",
+			setup: func(dir string) {
+				writeFixture(t, dir, "poetry.lock", ``)
+			},
+			wantFramework: ptr("python"),
+			wantLanguage:  ptr("python"),
+			wantPM:        ptr("poetry"),
+			wantDocker:    false,
+		},
 	}
 
 	stub := &session.Session{}

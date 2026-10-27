@@ -86,7 +86,7 @@ func (a AnalyzeProject) Execute(ctx context.Context, s *session.Session) (ToolRe
 		lang := "go"
 		proj.Framework = &fw
 		proj.Language = &lang
-	} else if entrySet["requirements.txt"] || entrySet["pyproject.toml"] || entrySet["Pipfile"] || entrySet["manage.py"] {
+	} else if entrySet["requirements.txt"] || entrySet["pyproject.toml"] || entrySet["Pipfile"] || entrySet["manage.py"] || entrySet["uv.lock"] || entrySet["poetry.lock"] {
 		proj = a.detectPython(ctx, s, proj, entrySet)
 	}
 	// If neither, leave Framework/Language nil.
@@ -119,6 +119,11 @@ func (a AnalyzeProject) detectPython(
 	lang := "python"
 	proj.Language = &lang
 	pm := "pip"
+	if entrySet["uv.lock"] {
+		pm = "uv"
+	} else if entrySet["poetry.lock"] {
+		pm = "poetry"
+	}
 	proj.PackageManager = &pm
 
 	fw := "python" // default
@@ -189,6 +194,9 @@ func (a AnalyzeProject) detectJS(
 
 	// Package manager (priority order).
 	switch {
+	case entrySet["bun.lockb"] || entrySet["bun.lock"]:
+		pm := "bun"
+		proj.PackageManager = &pm
 	case entrySet["pnpm-lock.yaml"]:
 		pm := "pnpm"
 		proj.PackageManager = &pm
@@ -234,6 +242,12 @@ func parsePackageJSON(content string, proj *projectData) *projectData {
 		{"next", "nextjs"},
 		{"react", "react"},
 		{"express", "express"},
+		{"astro", "astro"},
+		{"@sveltejs/kit", "sveltekit"},
+		{"svelte", "svelte"},
+		{"nuxt", "nuxt"},
+		{"vue", "vue"},
+		{"vite", "vite"},
 	}
 
 	for _, m := range matchers {

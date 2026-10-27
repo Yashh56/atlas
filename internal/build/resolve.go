@@ -20,8 +20,10 @@ import (
 //	go                       → go build ./...
 func ResolveBuildCommand(framework, packageManager string) (string, []string, error) {
 	switch framework {
-	case "nextjs", "react", "express", "node":
+	case "nextjs", "react", "express", "node", "astro", "svelte", "sveltekit", "vue", "nuxt", "vite":
 		switch packageManager {
+		case "bun":
+			return "bun", []string{"run", "build"}, nil
 		case "pnpm":
 			return "pnpm", []string{"build"}, nil
 		case "yarn":
@@ -55,8 +57,10 @@ func ResolveBuildCommand(framework, packageManager string) (string, []string, er
 //	go                       → go test ./...
 func ResolveTestCommand(framework, packageManager string) (string, []string, error) {
 	switch framework {
-	case "nextjs", "react", "express", "node":
+	case "nextjs", "react", "express", "node", "astro", "svelte", "sveltekit", "vue", "nuxt", "vite":
 		switch packageManager {
+		case "bun":
+			return "bun", []string{"test"}, nil
 		case "pnpm":
 			return "pnpm", []string{"test"}, nil
 		case "yarn":
@@ -93,6 +97,22 @@ func ResolvePublishDir(framework, packageManager, workspaceRoot string) (string,
 	if framework == "nextjs" {
 		// Next.js static exports go to "out" by default.
 		return "out", nil
+	}
+
+	if framework == "astro" {
+		return "dist", nil
+	}
+
+	if framework == "vite" || framework == "vue" {
+		return "dist", nil
+	}
+
+	if framework == "nuxt" {
+		return ".output/public", nil
+	}
+
+	if framework == "sveltekit" {
+		return "build", nil
 	}
 
 	if framework == "react" || framework == "node" {

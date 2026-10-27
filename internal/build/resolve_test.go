@@ -23,6 +23,14 @@ func TestResolveBuildCommand(t *testing.T) {
 		{"react", "pnpm", "pnpm", []string{"build"}, false},
 		{"react", "yarn", "yarn", []string{"build"}, false},
 		{"react", "npm", "npm", []string{"run", "build"}, false},
+		{"react", "bun", "bun", []string{"run", "build"}, false},
+		// new frameworks
+		{"astro", "npm", "npm", []string{"run", "build"}, false},
+		{"svelte", "pnpm", "pnpm", []string{"build"}, false},
+		{"sveltekit", "bun", "bun", []string{"run", "build"}, false},
+		{"vue", "yarn", "yarn", []string{"build"}, false},
+		{"nuxt", "npm", "npm", []string{"run", "build"}, false},
+		{"vite", "bun", "bun", []string{"run", "build"}, false},
 		// node generic
 		{"node", "npm", "npm", []string{"run", "build"}, false},
 		{"node", "pnpm", "pnpm", []string{"build"}, false},
@@ -83,6 +91,11 @@ func TestResolveTestCommand(t *testing.T) {
 		{"react", "pnpm", "pnpm", []string{"test"}, false},
 		{"react", "yarn", "yarn", []string{"test"}, false},
 		{"react", "npm", "npm", []string{"test"}, false},
+		{"react", "bun", "bun", []string{"test"}, false},
+		// new frameworks
+		{"astro", "bun", "bun", []string{"test"}, false},
+		{"svelte", "npm", "npm", []string{"test"}, false},
+		{"nuxt", "pnpm", "pnpm", []string{"test"}, false},
 		// node generic
 		{"node", "npm", "npm", []string{"test"}, false},
 		{"node", "pnpm", "pnpm", []string{"test"}, false},
@@ -125,3 +138,41 @@ func TestResolveTestCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestResolvePublishDir(t *testing.T) {
+	tempDir := t.TempDir()
+
+	tests := []struct {
+		framework string
+		wantDir   string
+		wantErr   bool
+	}{
+		{"astro", "dist", false},
+		{"vite", "dist", false},
+		{"vue", "dist", false},
+		{"nuxt", ".output/public", false},
+		{"sveltekit", "build", false},
+		{"nextjs", "out", false},
+		{"go", "", true},
+		{"react", "build", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.framework, func(t *testing.T) {
+			dir, err := build.ResolvePublishDir(tt.framework, "npm", tempDir)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for framework %s, got nil", tt.framework)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if dir != tt.wantDir {
+				t.Errorf("dir = %q, want %q", dir, tt.wantDir)
+			}
+		})
+	}
+}
+
