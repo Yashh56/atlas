@@ -482,7 +482,7 @@ func createModelList(store *credentials.Store) list.Model {
 }
 
 func createProviderList(store *credentials.Store) list.Model {
-	providers := []string{"vercel", "render", "netlify", "fly", "railway"}
+	providers := []string{"vercel", "render", "netlify"}
 	items := make([]list.Item, 0, len(providers))
 
 	for _, p := range providers {

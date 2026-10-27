@@ -57,3 +57,60 @@ func TestPathResolutionPriority(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderValidation(t *testing.T) {
+	origModel := deployModel
+	origAction := deployAction
+	origProvider := deployProvider
+	origNonInteractive := nonInteractiveFlag
+	defer func() {
+		deployModel = origModel
+		deployAction = origAction
+		deployProvider = origProvider
+		nonInteractiveFlag = origNonInteractive
+	}()
+
+	cases := []struct {
+		name      string
+		args      []string
+		wantError string
+	}{
+		{
+			name:      "planned provider fly fails fast",
+			args:      []string{"--path", ".", "--model", "openai", "--action", "deploy", "--provider", "fly"},
+			wantError: `provider "fly" is planned for v0.3.0 and not yet supported. Supported providers: netlify, render, vercel`,
+		},
+		{
+			name:      "planned provider railway fails fast",
+			args:      []string{"--path", ".", "--model", "openai", "--action", "deploy", "--provider", "railway"},
+			wantError: `provider "railway" is planned for v0.3.0 and not yet supported. Supported providers: netlify, render, vercel`,
+		},
+		{
+			name:      "unknown provider fails fast",
+			args:      []string{"--path", ".", "--model", "openai", "--action", "deploy", "--provider", "unknown"},
+			wantError: `unknown provider "unknown" — supported providers: netlify, render, vercel`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deployModel = ""
+			deployAction = ""
+			deployProvider = ""
+			nonInteractiveFlag = false
+
+			cmd := rootCmd
+			cmd.SetArgs(tc.args)
+			cmd.SetOut(new(bytes.Buffer))
+			cmd.SetErr(new(bytes.Buffer))
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantError)
+			}
+			if !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("expected error containing %q, got %q", tc.wantError, err.Error())
+			}
+		})
+	}
+}

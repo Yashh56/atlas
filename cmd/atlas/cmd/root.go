@@ -18,20 +18,25 @@ import (
 )
 
 var (
-	pathFlag         string
-	deployModel      string
-	deployAction     string
-	deployProvider   string
-	deployAllowDirty bool
-	outputDirFlag    string
-	autoRollbackFlag bool
+	pathFlag           string
+	deployModel        string
+	deployAction       string
+	deployProvider     string
+	deployAllowDirty   bool
+	outputDirFlag      string
+	autoRollbackFlag   bool
+	nonInteractiveFlag bool
 )
 
-// validProviders is the exhaustive list of accepted --provider values.
-var validProviders = map[string]bool{
+// supportedProviders contains deployment providers supported in v0.2.0.
+var supportedProviders = map[string]bool{
 	"vercel":  true,
 	"render":  true,
 	"netlify": true,
+}
+
+// plannedProviders are roadmapped providers scheduled for v0.3.0.
+var plannedProviders = map[string]bool{
 	"fly":     true,
 	"railway": true,
 }
@@ -75,10 +80,12 @@ func init() {
 	rootCmd.Flags().StringVar(&pathFlag, "path", "", "project path (alternative to positional arg, for paths that collide with a subcommand name)")
 	rootCmd.Flags().StringVar(&deployModel, "model", "", "LLM provider to use (anthropic, openai, etc.)")
 	rootCmd.Flags().StringVar(&deployAction, "action", "", "action mode: build, test, deploy, test-and-deploy")
-	rootCmd.Flags().StringVar(&deployProvider, "provider", "", "deployment provider (vercel, render, netlify, fly, railway)")
+	rootCmd.Flags().StringVar(&deployProvider, "provider", "", "deployment provider (vercel, render, netlify)")
 	rootCmd.Flags().BoolVar(&deployAllowDirty, "allow-dirty", false, "skip the dirty working-tree check and proceed even with uncommitted changes")
 	rootCmd.Flags().StringVar(&outputDirFlag, "output-dir", "", "manual output directory override (e.g. build, dist, out)")
 	rootCmd.Flags().BoolVar(&autoRollbackFlag, "auto-rollback-on-unhealthy", false, "automatically rollback without prompting if post-deploy health check fails")
+	rootCmd.Flags().BoolVarP(&nonInteractiveFlag, "yes", "y", false, "auto-approve deployment and run non-interactively without prompting")
+	rootCmd.Flags().BoolVar(&nonInteractiveFlag, "non-interactive", false, "run non-interactively without prompting (alias for -y/--yes)")
 
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(testllmCmd)
@@ -140,6 +147,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	isInteractive := term.IsTerminal(int(os.Stdin.Fd()))
+	if nonInteractiveFlag {
+		isInteractive = false
+	}
 
 	if path == "" {
 		return fmt.Errorf("no project path given. Please provide a path as an argument or via --path")
@@ -188,20 +198,27 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no provider resolved")
 	}
 
-	if deployProvider != "" && !validProviders[strings.ToLower(deployProvider)] {
-		return fmt.Errorf(
-			"unknown provider %q — valid options are: fly, netlify, railway, render, vercel",
-			deployProvider,
-		)
+	if deployProvider != "" {
+		pLower := strings.ToLower(deployProvider)
+		if plannedProviders[pLower] {
+			return fmt.Errorf("provider %q is planned for v0.3.0 and not yet supported. Supported providers: netlify, render, vercel", deployProvider)
+		}
+		if !supportedProviders[pLower] {
+			return fmt.Errorf(
+				"unknown provider %q — supported providers: netlify, render, vercel",
+				deployProvider,
+			)
+		}
 	}
 
 	opts := orchestrator.RunOptions{
-		AllowDirty:    deployAllowDirty,
-		ModelOverride: deployModel,
-		Action:        orchestrator.Action(deployAction),
-		IsInteractive: isInteractive,
-		OutputDir:     outputDirFlag,
-		AutoRollback:  autoRollbackFlag,
+		AllowDirty:     deployAllowDirty,
+		ModelOverride:  deployModel,
+		Action:         orchestrator.Action(deployAction),
+		IsInteractive:  isInteractive,
+		NonInteractive: nonInteractiveFlag,
+		OutputDir:      outputDirFlag,
+		AutoRollback:   autoRollbackFlag,
 	}
 	return orchestrator.Run(cmd.Context(), path, strings.ToLower(deployProvider), opts)
 }
