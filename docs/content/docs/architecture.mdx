@@ -45,6 +45,7 @@ Atlas is an autonomous deployment pipeline — a Go CLI that takes a project dir
       <Tree.Folder name="audit" />
       <Tree.Folder name="cliutil" />
       <Tree.Folder name="version" />
+      <Tree.Folder name="skills" />
     </Tree.Folder>
     <Tree.Folder name="skills">
       <Tree.File name="fix_build.md" />
@@ -135,13 +136,16 @@ On build exhaustion, the orchestrator reverts to the original git commit SHA cap
 ## Retry and Escalation Model
 
 The build→fix loop has a configurable maximum retry count (default: 4). On each failure:
-1. The build log tail (last 40 lines) is sent to the LLM with the `skills/fix_build.md` system prompt.
+1. The build log tail (last 40 lines) is sent to the LLM with the embedded `fix_build.md` system prompt (or project-level override at `.atlas/skills/fix_build.md` if present).
 2. The LLM returns a `FixResponse` struct (file path + new content + reasoning).
-3. The file is written and the build is re-run.
+3. The exact-match patch is applied and the build is re-run.
 
-If the LLM call itself fails (e.g., no API key), `FixCode` returns a `ToolResult` with `Success: false` and a descriptive `Error` string — never a silent blank error.
+**Stuck Loop Prevention**:
+Atlas tracks normalized SHA-256 signatures of build error logs. If an applied patch produces the exact same compiler error signature on rebuild, Atlas detects a stuck loop, restores workspace file snapshots from the session backup directory, and escalates immediately to prevent wasting LLM budget.
 
-If all retries are exhausted, the orchestrator reverts the workspace to the pre-deploy commit SHA via `git checkout <sha> -- .` and returns a non-zero exit code.
+If the LLM call itself fails (e.g., no API key), `FixCode` returns a `ToolResult` with `Success: false` and a descriptive `Error` string, never a silent blank error.
+
+If all retries are exhausted, the orchestrator restores files from session snapshots and returns a non-zero exit code.
 
 ---
 
