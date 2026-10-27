@@ -16,6 +16,7 @@ import (
 
 	"github.com/Yashh56/atlas/internal/llm"
 	"github.com/Yashh56/atlas/internal/session"
+	"github.com/Yashh56/atlas/internal/skills"
 	"github.com/Yashh56/atlas/internal/state"
 )
 
@@ -44,17 +45,14 @@ type FixResponse struct {
 func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult, error) {
 	start := time.Now()
 
-	// 1. Load skill file
-	skillPath := "skills/fix_build.md"
-	skillBytes, err := os.ReadFile(skillPath)
-	if err != nil {
-		// Fallback for tests running from internal/tools
-		skillBytes, err = os.ReadFile("../../skills/fix_build.md")
-		if err != nil {
-			return ToolResult{Success: false, Error: "failed to load fix_build skill: " + err.Error(), Duration: time.Since(start)}, nil
-		}
+	// 1. Load skill file. Project-specific override takes precedence, fallback to embedded skill.
+	var systemPrompt string
+	workspaceSkillPath := filepath.Join(f.WorkspaceRoot, ".atlas", "skills", "fix_build.md")
+	if customSkill, err := os.ReadFile(workspaceSkillPath); err == nil && len(customSkill) > 0 {
+		systemPrompt = string(customSkill)
+	} else {
+		systemPrompt = skills.DefaultFixBuildSkill
 	}
-	systemPrompt := string(skillBytes)
 
 	// 2. Load context (framework + build log)
 	var proj struct {

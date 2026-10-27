@@ -235,3 +235,69 @@ func TestFixCode_BoundedLoopTermination(t *testing.T) {
 		t.Fatalf("model was called too many times: %d, maxSteps enforcement failed", model.callCount)
 	}
 }
+
+
+func TestFixCode_EmbeddedSkillFallback(t *testing.T) {
+	ws := t.TempDir()
+	sessDir := filepath.Join(ws, ".atlas", "sessions", "test_sess")
+	os.MkdirAll(filepath.Join(sessDir, "logs"), 0o755)
+
+	state.SaveJSON(sessDir, "project.json", map[string]interface{}{"framework": "go"})
+	logPath := filepath.Join(sessDir, "logs", "build.log")
+	os.WriteFile(logPath, []byte("main.go:4: syntax error"), 0o644)
+	state.SaveJSON(sessDir, "build.json", map[string]interface{}{"log_path": logPath})
+	os.WriteFile(filepath.Join(ws, "main.go"), []byte("package main\nvar x = 1\n"), 0o644)
+
+	model := &fakeLanguageModel{
+		response: `{"file": "main.go", "old_str": "var x = 1", "new_str": "var x = 2", "reasoning": "increment x"}`,
+	}
+
+	tool := tools.FixCode{
+		WorkspaceRoot: ws,
+		Model:         model,
+		SessionDir:    sessDir,
+	}
+
+	res, err := tool.Execute(context.Background(), &session.Session{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success with embedded skill, got error: %s", res.Error)
+	}
+}
+
+func TestFixCode_WorkspaceSkillOverride(t *testing.T) {
+	ws := t.TempDir()
+	sessDir := filepath.Join(ws, ".atlas", "sessions", "test_sess")
+	os.MkdirAll(filepath.Join(sessDir, "logs"), 0o755)
+
+	customSkillDir := filepath.Join(ws, ".atlas", "skills")
+	os.MkdirAll(customSkillDir, 0o755)
+	customSkillPath := filepath.Join(customSkillDir, "fix_build.md")
+	os.WriteFile(customSkillPath, []byte("Custom fix build instructions"), 0o644)
+
+	state.SaveJSON(sessDir, "project.json", map[string]interface{}{"framework": "go"})
+	logPath := filepath.Join(sessDir, "logs", "build.log")
+	os.WriteFile(logPath, []byte("main.go:4: syntax error"), 0o644)
+	state.SaveJSON(sessDir, "build.json", map[string]interface{}{"log_path": logPath})
+	os.WriteFile(filepath.Join(ws, "main.go"), []byte("package main\nvar x = 1\n"), 0o644)
+
+	model := &fakeLanguageModel{
+		response: `{"file": "main.go", "old_str": "var x = 1", "new_str": "var x = 2", "reasoning": "increment x"}`,
+	}
+
+	tool := tools.FixCode{
+		WorkspaceRoot: ws,
+		Model:         model,
+		SessionDir:    sessDir,
+	}
+
+	res, err := tool.Execute(context.Background(), &session.Session{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success with workspace skill override, got error: %s", res.Error)
+	}
+}

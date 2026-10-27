@@ -22,7 +22,15 @@ Respond with ONLY valid JSON, no markdown fences, no preamble, no explanation ou
 "reasoning": "one sentence: only why this fixes the reported error, nothing else"
 }
 
-Example of inserting an import (notice old_str is not empty, it copies an existing line exactly):
+Example 1: Fixing a TypeScript/JavaScript import or syntax error (notice old_str is not empty, it copies existing lines exactly):
+{
+"file": "src/components/Header.tsx",
+"old_str": "import React from 'react';",
+"new_str": "import React, { useState } from 'react';",
+"reasoning": "useState was used in component but missing from imports"
+}
+
+Example 2: Fixing a Go import:
 {
 "file": "main.go",
 "old_str": "import (\n\t\"fmt\"\n)",
