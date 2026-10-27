@@ -46,6 +46,7 @@ Atlas is an autonomous deployment pipeline — a Go CLI that takes a project dir
       <Tree.Folder name="cliutil" />
       <Tree.Folder name="version" />
       <Tree.Folder name="skills" />
+      <Tree.Folder name="doctor" />
     </Tree.Folder>
     <Tree.Folder name="skills">
       <Tree.File name="fix_build.md" />
@@ -93,12 +94,15 @@ No tool writes to a context file it doesn't own.
 Each tool implements the `Tool` interface (`Name() string`, `Execute(ctx, sess) (ToolResult, error)`). Tools are pure functions — they read inputs from session context files and write outputs back. They don't call each other directly.
 
 Currently implemented tools:
-- `AnalyzeProject` — framework/package manager detection
+- `AnalyzeProject` — framework/package manager detection (supports Next.js, React, Express, Go, Django, FastAPI, Flask, Astro, Svelte, SvelteKit, Vue, Nuxt, Vite; package managers npm, pnpm, yarn, bun, uv, poetry)
 - `GitValidate` — checks for clean working tree, extracts commit SHA for rollback
 - `RunBuildCommand` — executes the framework-specific build command, captures logs
 - `FixCode` — calls the LLM (GoAI `GenerateObject`) with the build log and skill prompt, writes the patched file
 - `WriteFile` — atomic file write with workspace-root sandboxing
 - `RunCommand` — generic shell command execution
+
+### `internal/doctor` — Environment & security diagnostics
+Runs diagnostic checks across developer tools (Git, Node, npm, pnpm, yarn, bun, Go, Python, Docker), OS keychain readiness (`go-keyring` vs `0600` filesystem fallback), authenticated provider credentials, live LLM completion ping latency, and Atlas version status. Emits structured report types (`DiagnosticReport`) consumable by both interactive CLI rendering and automated JSON tooling (`--json`).
 
 ### `internal/llm` — LLM provider resolution
 Wraps [GoAI v0.8.6](https://github.com/zendev-sh/goai) to provide:
@@ -128,6 +132,8 @@ The central loop. Stages:
 11. Record deployment URL
 12. **Post-deploy HealthCheck**: Verify application health (`HTTP 200`)
 13. **Rollback**: If the health check fails, prompt to rollback to the `LastHealthyDeployment` (or automatically rollback if `--auto-rollback-on-unhealthy` is passed).
+
+When invoked with `--json`, the orchestrator suppresses interactive terminal banners, spinners, and ANSI formatting, emitting a structured `PipelineSummary` JSON document on stdout with execution metadata (`session_id`, `action`, `provider`, `framework`, `package_manager`, `commit_sha`, `deployment_url`, `duration_sec`, `error`).
 
 On build exhaustion, the orchestrator reverts to the original git commit SHA captured in step 7.
 

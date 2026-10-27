@@ -30,6 +30,7 @@ atlas [path] [flags]
 | `--allow-dirty` | Skip the uncommitted-changes check and proceed anyway |
 | `--auto-rollback-on-unhealthy` | Automatically rollback without prompting if post-deploy health check fails |
 | `--yes`, `-y`, `--non-interactive` | Auto-approve deployment and run non-interactively without prompting |
+| `--json` | Output in machine-readable JSON format and suppress interactive prompts |
 
 <Callout type="info">
   **Interactive Wizard**  
@@ -95,11 +96,17 @@ atlas [path] [flags]
 
 ## `atlas providers`
 
-Manage and view authentication status for all supported deploy providers.
+Manage and view authentication status for all supported deploy providers. Pass `--json` to output authentication metadata in machine-readable JSON format without exposing secrets.
 
 ```bash
-atlas providers
+atlas providers [flags]
 ```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output provider credential metadata as JSON |
 
 **Example Output:**
 ```bash
@@ -259,6 +266,83 @@ Deployment
   URL:      https://my-app-xyz.vercel.app
   Health:   Up (200 OK)
 ```
+
+---
+
+## `atlas doctor`
+
+Run comprehensive diagnostics on installed developer tools, security credentials, LLM API connectivity, and Atlas release freshness.
+
+```bash
+atlas doctor [path] [flags]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output diagnostic report in machine-readable JSON format |
+
+### Diagnostic Categories
+
+- **Tools & Environment**: Inspects Git (version, clean/dirty working tree state), Node.js, npm, pnpm, yarn, bun, Go, Python, and Docker daemon reachability.
+- **Security & Credentials**: Verifies OS keychain accessibility (native OS keychain vs `0600` fallback file) and authenticated deployment providers.
+- **LLM Configuration**: Inspects configured provider and model, and measures live API completion ping latency.
+- **Atlas Version**: Compares running version with the latest GitHub release.
+
+<Tabs items={['Terminal Output', 'JSON Output']}>
+  <Tab value="Terminal Output">
+    ```bash
+    $ atlas doctor
+
+     ATLAS DOCTOR 
+
+    Tools & Environment
+      ✓ Git                git version 2.43.0 (clean working tree)
+      ✓ Node               v24.19.0
+      ✓ Npm                12.2.0
+      ✓ Pnpm               12.9.1
+      ✓ Bun                1.3.13
+      ✓ Go                 go version go1.27.1
+      ✓ Docker             Docker version 28.1.1 (daemon reachable)
+
+    Security & Credentials
+      ✓ Keyring            Native OS keychain available
+      ✓ Vercel             Authenticated (cli_session)
+      ✓ Render             Authenticated via RENDER_TOKEN
+      ✓ Netlify            Authenticated (cli_session)
+
+    LLM Configuration
+      ✓ Model (claude-3-5-sonnet-20240620) Connected (latency: 340ms)
+
+    Atlas Version
+      ✓ Atlas CLI          v0.2.0 (Up to date with latest release)
+
+    ╭───────────────────────────────────────────────────╮
+    │  ✓ All diagnostic checks passed! Atlas is ready.  │
+    ╰───────────────────────────────────────────────────╯
+    ```
+  </Tab>
+  <Tab value="JSON Output">
+    ```json
+    $ atlas doctor --json
+    {
+      "timestamp": "2026-10-27T10:43:27Z",
+      "overall": "pass",
+      "categories": [
+        {
+          "category": "Tools & Environment",
+          "checks": [
+            { "name": "Git", "status": "pass", "version": "git version 2.43.0", "details": "clean working tree" },
+            { "name": "Node", "status": "pass", "version": "v24.19.0" },
+            { "name": "Bun", "status": "pass", "version": "1.3.13" }
+          ]
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
 
 ---
 

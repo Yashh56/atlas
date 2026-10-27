@@ -50,6 +50,20 @@ You can verify your configuration at any time by running:
 atlas models
 ```
 
+## Diagnosing Your Setup (`atlas doctor`)
+
+Before running your first deployment, you can verify that your development tools (Git, Node, npm, pnpm, bun, Go, Python, Docker), OS keychain, and LLM API connectivity are configured properly:
+
+```bash
+atlas doctor
+```
+
+Or in headless CI environments:
+
+```bash
+atlas doctor --json
+```
+
 ## Your First Deployment
 
 Atlas is designed to be completely zero-config. Simply navigate to your project directory and run the `atlas` command interactively.
