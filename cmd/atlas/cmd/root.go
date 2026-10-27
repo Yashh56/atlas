@@ -26,6 +26,7 @@ var (
 	outputDirFlag      string
 	autoRollbackFlag   bool
 	nonInteractiveFlag bool
+	jsonFlag           bool
 )
 
 // supportedProviders contains deployment providers supported in v0.2.0.
@@ -68,7 +69,7 @@ func Execute() error {
 
 	err := rootCmd.Execute()
 
-	if latestRelease != nil && !isUpdateCmd {
+	if latestRelease != nil && !isUpdateCmd && !jsonFlag {
 		fmt.Printf("\n%s A new version of Atlas is available: %s -> %s\n", cliutil.StyleHighlight.Render("UPDATE:"), version.Version, latestRelease.TagName)
 		fmt.Printf("Run %s to update.\n\n", cliutil.StylePrompt.Render("atlas update"))
 	}
@@ -87,12 +88,15 @@ func init() {
 	rootCmd.Flags().BoolVarP(&nonInteractiveFlag, "yes", "y", false, "auto-approve deployment and run non-interactively without prompting")
 	rootCmd.Flags().BoolVar(&nonInteractiveFlag, "non-interactive", false, "run non-interactively without prompting (alias for -y/--yes)")
 
+	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "output in machine-readable JSON format")
+
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(testllmCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(modelsCmd)
 	rootCmd.AddCommand(providersCmd)
+	rootCmd.AddCommand(doctorCmd)
 
 	if vf := rootCmd.Flags().Lookup("version"); vf != nil {
 		vf.Shorthand = "v"
@@ -132,7 +136,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	var path string
 
 	if len(args) == 0 && cmd.Flags().NFlag() == 0 {
-		cliutil.PrintWelcome()
+		if !jsonFlag {
+			cliutil.PrintWelcome()
+		}
 		return nil
 	}
 
@@ -147,7 +153,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	isInteractive := term.IsTerminal(int(os.Stdin.Fd()))
-	if nonInteractiveFlag {
+	if nonInteractiveFlag || jsonFlag {
 		isInteractive = false
 	}
 
@@ -216,9 +222,10 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		ModelOverride:  deployModel,
 		Action:         orchestrator.Action(deployAction),
 		IsInteractive:  isInteractive,
-		NonInteractive: nonInteractiveFlag,
+		NonInteractive: nonInteractiveFlag || jsonFlag,
 		OutputDir:      outputDirFlag,
 		AutoRollback:   autoRollbackFlag,
+		JSONMode:       jsonFlag,
 	}
 	return orchestrator.Run(cmd.Context(), path, strings.ToLower(deployProvider), opts)
 }

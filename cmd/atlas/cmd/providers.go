@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -53,11 +54,74 @@ func init() {
 	providersCmd.AddCommand(providersResetCmd)
 }
 
-func runProviders(_ *cobra.Command, _ []string) error {
+type ProviderStatusJSON struct {
+	Provider      string     `json:"provider"`
+	Authenticated bool       `json:"authenticated"`
+	Method        string     `json:"method,omitempty"`
+	EnvVar        string     `json:"env_var,omitempty"`
+	Account       string     `json:"account,omitempty"`
+	VerifiedAt    *time.Time `json:"verified_at,omitempty"`
+}
+
+func runProviders(cmd *cobra.Command, _ []string) error {
 	store, err := openCredentials()
-	if err != nil {
+	if err != nil && !jsonFlag {
 		fmt.Fprintf(os.Stderr, "⚠  Could not open credential store: %v\n", err)
 		store = nil
+	}
+
+	if jsonFlag {
+		providers := []string{"vercel", "render", "netlify", "fly", "railway"}
+		envVars := map[string]string{
+			"vercel":  "VERCEL_TOKEN",
+			"render":  "RENDER_TOKEN",
+			"netlify": "NETLIFY_TOKEN",
+			"fly":     "FLY_API_TOKEN",
+			"railway": "RAILWAY_API_TOKEN",
+		}
+
+		var statuses []ProviderStatusJSON
+		for _, p := range providers {
+			envVar := envVars[p]
+			if os.Getenv(envVar) != "" {
+				statuses = append(statuses, ProviderStatusJSON{
+					Provider:      p,
+					Authenticated: true,
+					Method:        string(credentials.MethodEnvVar),
+					EnvVar:        envVar,
+				})
+				continue
+			}
+
+			if store != nil {
+				if meta, ok, _ := store.GetMeta(p); ok {
+					account := meta.Account
+					if account == "" {
+						account = "unknown"
+					}
+					statuses = append(statuses, ProviderStatusJSON{
+						Provider:      p,
+						Authenticated: true,
+						Method:        string(meta.Method),
+						Account:       account,
+						VerifiedAt:    &meta.VerifiedAt,
+					})
+					continue
+				}
+			}
+
+			statuses = append(statuses, ProviderStatusJSON{
+				Provider:      p,
+				Authenticated: false,
+			})
+		}
+
+		data, err := json.MarshalIndent(statuses, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(data))
+		return nil
 	}
 
 	fmt.Println(cliutil.FormatHeader("DEPLOY PROVIDERS"))

@@ -32,7 +32,6 @@ var statusCmd = &cobra.Command{
 
 func init() {
 	statusCmd.Flags().StringVar(&statusSessionID, "session", "", "Specific session UUID to check (default: latest)")
-	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "Output status as JSON")
 }
 
 func statusColor(status string) lipgloss.Style {
@@ -127,7 +126,7 @@ func runStatus(_ *cobra.Command, args []string) error {
 	buildState, _ := orchestrator.LoadBuild(sessionDir)
 	deployState, _ := orchestrator.LoadDeployment(sessionDir)
 
-	if statusJSON {
+	if jsonFlag || statusJSON {
 		output := map[string]interface{}{
 			"session":    sess,
 			"planner":    planner,

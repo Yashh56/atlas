@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -54,5 +56,30 @@ func TestProvidersSetAndUnset(t *testing.T) {
 	_, err = store.GetSecret("vercel")
 	if err == nil {
 		t.Errorf("expected error getting deleted secret, got nil")
+	}
+}
+
+func TestProvidersJSON(t *testing.T) {
+	origJSON := jsonFlag
+	defer func() { jsonFlag = origJSON }()
+
+	jsonFlag = true
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+	rootCmd.SetArgs([]string{"providers", "--json"})
+
+	err := rootCmd.Execute()
+	if err != nil {
+		t.Fatalf("providers execution failed: %v", err)
+	}
+
+	var statuses []ProviderStatusJSON
+	if err := json.Unmarshal(buf.Bytes(), &statuses); err != nil {
+		t.Fatalf("expected valid JSON array, got: %v; output: %s", err, buf.String())
+	}
+
+	if len(statuses) != 5 {
+		t.Errorf("expected 5 providers, got %d", len(statuses))
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,14 +60,51 @@ type RunOptions struct {
 	NonInteractive bool
 	OutputDir      string
 	AutoRollback   bool
+	JSONMode       bool
+}
+
+// PipelineSummary is emitted to stdout on run completion when JSONMode is enabled.
+type PipelineSummary struct {
+	Success        bool    `json:"success"`
+	SessionID      string  `json:"session_id,omitempty"`
+	Action         string  `json:"action"`
+	Provider       string  `json:"provider,omitempty"`
+	Framework      string  `json:"framework,omitempty"`
+	PackageManager string  `json:"package_manager,omitempty"`
+	CommitSHA      string  `json:"commit_sha,omitempty"`
+	DeploymentURL  string  `json:"deployment_url,omitempty"`
+	DurationSec    float64 `json:"duration_sec"`
+	Error          string  `json:"error,omitempty"`
 }
 
 // Run executes the full Atlas pipeline by dispatching to modular steps.
 func Run(ctx context.Context, workspacePath, providerName string, opts RunOptions) (runErr error) {
+	startTime := time.Now()
+	var sessID string
+	var summaryFramework string
+	var summaryPackageManager string
+	var summaryCommitSHA string
+	var summaryDepURL string
+
 	cfg, ws, sess, sessDir, llmModel, provider, dep, err := executeSetup(ctx, workspacePath, providerName, opts)
 	if err != nil {
+		if opts.JSONMode {
+			summary := PipelineSummary{
+				Success:     false,
+				Action:      string(opts.Action),
+				Provider:    providerName,
+				DurationSec: math.Round(time.Since(startTime).Seconds()*100) / 100,
+				Error:       err.Error(),
+			}
+			if summary.Action == "" {
+				summary.Action = string(ActionDeploy)
+			}
+			data, _ := json.MarshalIndent(summary, "", "  ")
+			fmt.Println(string(data))
+		}
 		return err
 	}
+	sessID = sess.ID
 
 	goal := string(opts.Action)
 	if goal == "" {
@@ -88,28 +127,66 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 		_ = sess.Save(filepath.Join(ws.Root, ".atlas", "sessions"))
 
 		if didStash {
-			cliutil.Info("Restoring stashed uncommitted changes...")
+			if !opts.JSONMode {
+				cliutil.Info("Restoring stashed uncommitted changes...")
+			}
 			popCmd := tools.RunCommand{
 				Command: "git",
 				Args:    []string{"stash", "pop"},
 				Dir:     workspacePath,
 			}
 			res, _ := popCmd.Execute(ctx, sess)
-			if !res.Success {
-				fmt.Printf("%s Failed to pop stash automatically. Please run `git stash pop` manually to resolve any conflicts.\n", styleWarn)
-			} else {
-				fmt.Printf("%s Stash restored successfully.\n", styleCheck)
+			if !opts.JSONMode {
+				if !res.Success {
+					fmt.Printf("%s Failed to pop stash automatically. Please run `git stash pop` manually to resolve any conflicts.\n", styleWarn)
+				} else {
+					fmt.Printf("%s Stash restored successfully.\n", styleCheck)
+				}
 			}
 		}
 
-		// Print token usage if tracking is enabled/recorded, even if zero.
-		if planner != nil {
-			fmt.Printf("\n%s Session Token Usage: %d total (%d prompt, %d completion)\n", styleCheck, planner.TokenUsage.TotalTokens, planner.TokenUsage.InputTokens, planner.TokenUsage.OutputTokens)
+		if opts.JSONMode {
+			durationSec := math.Round(time.Since(startTime).Seconds()*100) / 100
+			actionStr := string(opts.Action)
+			if actionStr == "" {
+				actionStr = string(ActionDeploy)
+			}
+			errStr := ""
+			if runErr != nil {
+				errStr = runErr.Error()
+			}
+			if dep != nil && dep.DeploymentURL != nil {
+				summaryDepURL = *dep.DeploymentURL
+			}
+			summary := PipelineSummary{
+				Success:        runErr == nil,
+				SessionID:      sessID,
+				Action:         actionStr,
+				Provider:       providerName,
+				Framework:      summaryFramework,
+				PackageManager: summaryPackageManager,
+				CommitSHA:      summaryCommitSHA,
+				DeploymentURL:  summaryDepURL,
+				DurationSec:    durationSec,
+				Error:          errStr,
+			}
+			data, _ := json.MarshalIndent(summary, "", "  ")
+			fmt.Println(string(data))
+		} else {
+			// Print token usage if tracking is enabled/recorded, even if zero.
+			if planner != nil {
+				fmt.Printf("\n%s Session Token Usage: %d total (%d prompt, %d completion)\n", styleCheck, planner.TokenUsage.TotalTokens, planner.TokenUsage.InputTokens, planner.TokenUsage.OutputTokens)
+			}
 		}
 	}()
 
 	commitSHA, framework, packageManager, newDidStash, runErr := executeAnalyzeAndValidate(ctx, ws, sess, sessDir, planner, providerName, opts)
 	didStash = newDidStash
+	summaryFramework = framework
+	summaryPackageManager = packageManager
+	if commitSHA != nil {
+		summaryCommitSHA = *commitSHA
+	}
 	if runErr != nil {
 		return runErr
 	}
@@ -120,7 +197,9 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	}
 
 	if opts.Action == ActionBuild {
-		fmt.Printf("%s Action 'build' complete. Stopping before tests or deploy.\n", styleCheck)
+		if !opts.JSONMode {
+			fmt.Printf("%s Action 'build' complete. Stopping before tests or deploy.\n", styleCheck)
+		}
 		planner.CurrentStep = "done"
 		_ = SavePlanner(sessDir, planner)
 		return nil
@@ -132,7 +211,9 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 			return runErr
 		}
 		if opts.Action == ActionTest {
-			fmt.Printf("%s Action 'test' complete. Stopping before deploy.\n", styleCheck)
+			if !opts.JSONMode {
+				fmt.Printf("%s Action 'test' complete. Stopping before deploy.\n", styleCheck)
+			}
 			planner.CurrentStep = "done"
 			_ = SavePlanner(sessDir, planner)
 			return nil
@@ -140,6 +221,9 @@ func Run(ctx context.Context, workspacePath, providerName string, opts RunOption
 	}
 
 	runErr = executeDeploy(ctx, ws, sessDir, planner, cfg, dep, provider, providerName, opts)
+	if dep != nil && dep.DeploymentURL != nil {
+		summaryDepURL = *dep.DeploymentURL
+	}
 	return runErr
 }
 
@@ -168,7 +252,9 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		err = fmt.Errorf("orchestrator: loading config: %w", err)
 		return
 	}
-	fmt.Printf("%s\n", cliutil.FormatSuccess("Config", "loaded"))
+	if !opts.JSONMode {
+		fmt.Printf("%s\n", cliutil.FormatSuccess("Config", "loaded"))
+	}
 
 	ws, err = workspace.Resolve(workspacePath)
 	if err != nil {
@@ -179,10 +265,12 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		err = fmt.Errorf("orchestrator: workspace path %q does not exist", workspacePath)
 		return
 	}
-	fmt.Printf("%s\n", cliutil.FormatSuccess("Workspace", "resolved"))
+	if !opts.JSONMode {
+		fmt.Printf("%s\n", cliutil.FormatSuccess("Workspace", "resolved"))
+	}
 
 	store, storeErr := credentials.Open()
-	if storeErr != nil {
+	if storeErr != nil && !opts.JSONMode {
 		fmt.Printf("%s Could not open credential store: %v — continuing without it\n\n", styleWarn, storeErr)
 	}
 
@@ -194,7 +282,9 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		err = fmt.Errorf("orchestrator: resolving LLM model: %w", err)
 		return
 	}
-	fmt.Printf("%s\n\n", cliutil.FormatSuccess("Model", llmModel.ModelID()))
+	if !opts.JSONMode {
+		fmt.Printf("%s\n\n", cliutil.FormatSuccess("Model", llmModel.ModelID()))
+	}
 
 	if providerName != "" && opts.Action.IsDeploy() {
 		registry := deploy.NewRegistry()
@@ -211,19 +301,25 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 
 		switch providerName {
 		case "vercel":
-			fmt.Printf("%s Checking Vercel authentication...\n", styleArrow)
+			if !opts.JSONMode {
+				fmt.Printf("%s Checking Vercel authentication...\n", styleArrow)
+			}
 			if authErr := vercel.EnsureVercelAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
 				err = fmt.Errorf("Vercel auth failed: %w", authErr)
 				return
 			}
 		case "render":
-			fmt.Printf("%s Checking Render authentication...\n", styleArrow)
+			if !opts.JSONMode {
+				fmt.Printf("%s Checking Render authentication...\n", styleArrow)
+			}
 			if authErr := render.EnsureRenderAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
 				err = fmt.Errorf("Render auth failed: %w", authErr)
 				return
 			}
 		case "netlify":
-			fmt.Printf("%s Checking Netlify authentication...\n", styleArrow)
+			if !opts.JSONMode {
+				fmt.Printf("%s Checking Netlify authentication...\n", styleArrow)
+			}
 			if authErr := netlify.EnsureNetlifyAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
 				err = fmt.Errorf("Netlify auth failed: %w", authErr)
 				return
@@ -251,7 +347,9 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 	}
 	_ = SaveProject(sessDir, &proj)
 
-	fmt.Printf("%s\n\n", cliutil.FormatSuccess("Session", sess.ID))
+	if !opts.JSONMode {
+		fmt.Printf("%s\n\n", cliutil.FormatSuccess("Session", sess.ID))
+	}
 	return
 }
 
@@ -262,18 +360,25 @@ func executeAnalyzeAndValidate(
 
 	planner.CurrentStep = "analyze_project"
 
-	spinner := cliutil.StartSpinner("Analyzing project...")
+	var spinner *cliutil.Spinner
+	if !opts.JSONMode {
+		spinner = cliutil.StartSpinner("Analyzing project...")
+	}
 
 	analyzeTool := tools.AnalyzeProject{WorkspaceRoot: ws.Root, SessionDir: sessDir}
 	analyzeResult, err := analyzeTool.Execute(ctx, sess)
 
-	spinner.Stop()
+	if !opts.JSONMode && spinner != nil {
+		spinner.Stop()
+	}
 
 	if err != nil {
 		return nil, "", "", false, fmt.Errorf("orchestrator: analyze_project: %w", err)
 	}
 	if analyzeResult.Success {
-		fmt.Printf("%s\n", cliutil.FormatSuccess("Analysis", analyzeResult.Output))
+		if !opts.JSONMode {
+			fmt.Printf("%s\n", cliutil.FormatSuccess("Analysis", analyzeResult.Output))
+		}
 		planner.Completed = append(planner.Completed, "analyze_project")
 
 		// Fail closed on unsupported Python frameworks before proceeding
@@ -295,35 +400,41 @@ func executeAnalyzeAndValidate(
 
 	planner.CurrentStep = "git_validate"
 
-	spinner = cliutil.StartSpinner("Validating git repository...")
+	if !opts.JSONMode {
+		spinner = cliutil.StartSpinner("Validating git repository...")
+	}
 
 	gitVal := tools.GitValidate{WorkspaceRoot: ws.Root, GitRoot: ws.GitRoot, SessionDir: sessDir, Provider: providerName}
 	gitResult, err := gitVal.Execute(ctx, sess)
 
-	spinner.Stop()
+	if !opts.JSONMode && spinner != nil {
+		spinner.Stop()
+	}
 
 	if err != nil {
 		return nil, "", "", false, fmt.Errorf("orchestrator: git_validate: %w", err)
 	}
 
 	if gitResult.Success && gitResult.Output != "no_git_repo" {
-		fmt.Printf("%s\n", cliutil.FormatSuccess("Git", gitResult.Output))
-		if proj, err := LoadProject(sessDir); err == nil && proj != nil {
-			if proj.Git.Branch != nil && *proj.Git.Branch != "" {
-				fmt.Printf("%s\n", cliutil.FormatSuccess("Branch", *proj.Git.Branch))
-			}
-			if proj.Git.CommitSHA != nil && *proj.Git.CommitSHA != "" {
-				sha := *proj.Git.CommitSHA
-				if len(sha) > 7 {
-					sha = sha[:7]
+		if !opts.JSONMode {
+			fmt.Printf("%s\n", cliutil.FormatSuccess("Git", gitResult.Output))
+			if proj, err := LoadProject(sessDir); err == nil && proj != nil {
+				if proj.Git.Branch != nil && *proj.Git.Branch != "" {
+					fmt.Printf("%s\n", cliutil.FormatSuccess("Branch", *proj.Git.Branch))
 				}
-				fmt.Printf("%s\n", cliutil.FormatSuccess("Commit", sha))
+				if proj.Git.CommitSHA != nil && *proj.Git.CommitSHA != "" {
+					sha := *proj.Git.CommitSHA
+					if len(sha) > 7 {
+						sha = sha[:7]
+					}
+					fmt.Printf("%s\n", cliutil.FormatSuccess("Commit", sha))
+				}
+				if proj.Git.Remote != nil && *proj.Git.Remote != "" {
+					fmt.Printf("%s\n", cliutil.FormatSuccess("Remote", *proj.Git.Remote))
+				}
 			}
-			if proj.Git.Remote != nil && *proj.Git.Remote != "" {
-				fmt.Printf("%s\n", cliutil.FormatSuccess("Remote", *proj.Git.Remote))
-			}
+			fmt.Println()
 		}
-		fmt.Println()
 		planner.Completed = append(planner.Completed, "git_validate")
 
 		if gitResult.Output == "is_clean:false" && !opts.AllowDirty {
@@ -490,11 +601,15 @@ func executeBuildLoop(
 
 	// Install dependencies before starting the build loop
 	if framework == "go" {
-		fmt.Printf("%s Fetching dependencies (go mod tidy & download)...\n", styleArrow)
+		if !opts.JSONMode {
+			fmt.Printf("%s Fetching dependencies (go mod tidy & download)...\n", styleArrow)
+		}
 		tools.RunCommand{Command: "go", Args: []string{"mod", "tidy"}, Dir: ws.Root}.Execute(ctx, sess)
 		tools.RunCommand{Command: "go", Args: []string{"mod", "download"}, Dir: ws.Root}.Execute(ctx, sess)
 	} else if framework == "node" && packageManager != "" {
-		fmt.Printf("%s Installing dependencies (%s install)...\n", styleArrow, packageManager)
+		if !opts.JSONMode {
+			fmt.Printf("%s Installing dependencies (%s install)...\n", styleArrow, packageManager)
+		}
 		tools.RunCommand{Command: packageManager, Args: []string{"install"}, Dir: ws.Root}.Execute(ctx, sess)
 	} else if framework == "python" || framework == "django" || framework == "fastapi" || framework == "flask" {
 		reqPath := filepath.Join(ws.Root, "requirements.txt")
@@ -503,7 +618,9 @@ func executeBuildLoop(
 		}
 
 		if _, err := os.Stat(filepath.Join(ws.Root, ".venv")); os.IsNotExist(err) {
-			fmt.Printf("%s Creating Python virtual environment (.venv)...\n", styleArrow)
+			if !opts.JSONMode {
+				fmt.Printf("%s Creating Python virtual environment (.venv)...\n", styleArrow)
+			}
 			pyCmd := build.ResolvePythonBinary(ws.Root, "python")
 			res, err := tools.RunCommand{Command: pyCmd, Args: []string{"-m", "venv", ".venv"}, Dir: ws.Root}.Execute(ctx, sess)
 			if err != nil {
@@ -515,7 +632,9 @@ func executeBuildLoop(
 		}
 
 		pythonCmd := build.ResolvePythonBinary(ws.Root, "python")
-		fmt.Printf("%s Installing dependencies (python -m pip install -r requirements.txt)...\n", styleArrow)
+		if !opts.JSONMode {
+			fmt.Printf("%s Installing dependencies (python -m pip install -r requirements.txt)...\n", styleArrow)
+		}
 		res, err := tools.RunCommand{Command: pythonCmd, Args: []string{"-m", "pip", "install", "-r", "requirements.txt"}, Dir: ws.Root}.Execute(ctx, sess)
 		if err != nil {
 			return fmt.Errorf("failed to execute dependency installation: %v", err)
@@ -529,7 +648,10 @@ func executeBuildLoop(
 		planner.CurrentStep = "run_build_command"
 		_ = SavePlanner(sessDir, planner)
 
-		spinner := cliutil.StartSpinner("Running build command...")
+		var spinner *cliutil.Spinner
+		if !opts.JSONMode {
+			spinner = cliutil.StartSpinner("Running build command...")
+		}
 
 		var buildResult tools.ToolResult
 		var err error
@@ -551,7 +673,9 @@ func executeBuildLoop(
 			buildResult, err = buildTool.Execute(ctx, sess)
 		}
 
-		spinner.Stop()
+		if !opts.JSONMode && spinner != nil {
+			spinner.Stop()
+		}
 
 		if err != nil {
 			return fmt.Errorf("orchestrator: run_build_command: %w", err)
@@ -763,7 +887,9 @@ func executeTests(
 	planner.CurrentStep = "run_tests"
 	_ = SavePlanner(sessDir, planner)
 
-	fmt.Printf("%s Running tests...\n", styleArrow)
+	if !opts.JSONMode {
+		fmt.Printf("%s Running tests...\n", styleArrow)
+	}
 	testTool := tools.RunTests{
 		WorkspaceRoot:  ws.Root,
 		Framework:      framework,
@@ -782,11 +908,15 @@ func executeTests(
 	durationSec := float64(ts.DurationMs) / 1000.0
 
 	if testResult.Success {
-		fmt.Printf("%s Tests passed (%.1fs) → %s\n\n", styleCheck, durationSec, testResult.Output)
+		if !opts.JSONMode {
+			fmt.Printf("%s Tests passed (%.1fs) → %s\n\n", styleCheck, durationSec, testResult.Output)
+		}
 		planner.Completed = append(planner.Completed, "run_tests")
 		_ = SavePlanner(sessDir, planner)
 	} else {
-		fmt.Printf("%s Tests failed (%.1fs) → %s\n", styleCross, durationSec, testResult.Output)
+		if !opts.JSONMode {
+			fmt.Printf("%s Tests failed (%.1fs) → %s\n", styleCross, durationSec, testResult.Output)
+		}
 		planner.Failed = append(planner.Failed, "run_tests")
 		_ = SavePlanner(sessDir, planner)
 		return fmt.Errorf("action %q aborted due to test failure", opts.Action)
@@ -806,11 +936,15 @@ func executeDeploy(
 		approved = CheckApproval(cfg, dep, os.Stdin, os.Stdout)
 	}
 	if !approved {
-		fmt.Println("\nDeployment cancelled by user.")
+		if !opts.JSONMode {
+			fmt.Println("\nDeployment cancelled by user.")
+		}
 		return nil
 	}
 
-	fmt.Printf("%s Deploying to %s (%s)...\n", styleArrow, providerName, dep.Environment)
+	if !opts.JSONMode {
+		fmt.Printf("%s Deploying to %s (%s)...\n", styleArrow, providerName, dep.Environment)
+	}
 	planner.CurrentStep = "deploy"
 	_ = SavePlanner(sessDir, planner)
 
@@ -840,17 +974,22 @@ func executeDeploy(
 	RecordDeployment(dep, deployRes.URL)
 	_ = SaveDeployment(sessDir, dep)
 
-	fmt.Printf("\n%s\n\n", cliutil.FormatBox(fmt.Sprintf("%s Deployed successfully to %s", cliutil.IconSuccess, cliutil.StyleHighlight.Render(deployRes.URL))))
-
-	fmt.Printf("%s Running post-deployment health check...\n", styleArrow)
+	if !opts.JSONMode {
+		fmt.Printf("\n%s\n\n", cliutil.FormatBox(fmt.Sprintf("%s Deployed successfully to %s", cliutil.IconSuccess, cliutil.StyleHighlight.Render(deployRes.URL))))
+		fmt.Printf("%s Running post-deployment health check...\n", styleArrow)
+	}
 	healthErr := provider.HealthCheck(ctx, deployRes)
 
 	if healthErr == nil {
-		fmt.Printf("%s Health check passed!\n", styleCheck)
+		if !opts.JSONMode {
+			fmt.Printf("%s Health check passed!\n", styleCheck)
+		}
 		dep.LastHealthyDeployment = deployRes
 		_ = SaveDeployment(sessDir, dep)
 	} else {
-		fmt.Printf("%s Health check failed: %v\n", styleCross, healthErr)
+		if !opts.JSONMode {
+			fmt.Printf("%s Health check failed: %v\n", styleCross, healthErr)
+		}
 
 		if dep.LastHealthyDeployment == nil {
 			planner.Failed = append(planner.Failed, "deploy")
@@ -870,19 +1009,25 @@ func executeDeploy(
 		}
 
 		if doRollback {
-			fmt.Printf("%s Rolling back to previous healthy deployment...\n", styleArrow)
+			if !opts.JSONMode {
+				fmt.Printf("%s Rolling back to previous healthy deployment...\n", styleArrow)
+			}
 			rbErr := provider.Rollback(ctx, dep.LastHealthyDeployment, deployInput)
 			if rbErr != nil {
 				return fmt.Errorf("rollback failed: %w", rbErr)
 			}
 
-			fmt.Printf("%s Rollback executed. Verifying health...\n", styleArrow)
+			if !opts.JSONMode {
+				fmt.Printf("%s Rollback executed. Verifying health...\n", styleArrow)
+			}
 			rbHealthErr := provider.HealthCheck(ctx, dep.LastHealthyDeployment)
 			if rbHealthErr != nil {
 				return fmt.Errorf("rolled back deployment failed health check: %w", rbHealthErr)
 			}
 
-			fmt.Printf("%s Successfully rolled back to %s\n", styleCheck, dep.LastHealthyDeployment.URL)
+			if !opts.JSONMode {
+				fmt.Printf("%s Successfully rolled back to %s\n", styleCheck, dep.LastHealthyDeployment.URL)
+			}
 
 			// Leave dep.LastHealthyDeployment as is, because it's still the last healthy one
 		} else {
