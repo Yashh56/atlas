@@ -207,11 +207,54 @@ func (a AnalyzeProject) detectJS(
 		pm := "npm"
 		proj.PackageManager = &pm
 	default:
-		pm := "npm"
-		proj.PackageManager = &pm
+		// Check parent directories up to git/monorepo root for shared monorepo lockfiles
+		if parentPM := findParentPackageManager(a.WorkspaceRoot); parentPM != "" {
+			proj.PackageManager = &parentPM
+		} else {
+			pm := "npm"
+			proj.PackageManager = &pm
+		}
 	}
 
 	return proj
+}
+
+func findParentPackageManager(startDir string) string {
+	current := filepath.Dir(startDir)
+	for {
+		if current == "" || current == "." {
+			break
+		}
+
+		if fileExists(filepath.Join(current, "pnpm-lock.yaml")) || fileExists(filepath.Join(current, "pnpm-workspace.yaml")) {
+			return "pnpm"
+		}
+		if fileExists(filepath.Join(current, "bun.lockb")) || fileExists(filepath.Join(current, "bun.lock")) {
+			return "bun"
+		}
+		if fileExists(filepath.Join(current, "yarn.lock")) {
+			return "yarn"
+		}
+		if fileExists(filepath.Join(current, "package-lock.json")) {
+			return "npm"
+		}
+
+		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
+			break
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return ""
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 type pkgJSON struct {

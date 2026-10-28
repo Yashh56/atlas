@@ -78,3 +78,81 @@ func TestResolve_NonExistentPath(t *testing.T) {
 		t.Error("expected Exists to be false for nonexistent path")
 	}
 }
+
+func TestResolve_Monorepo(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pnpm-workspace.yaml"), []byte("packages:\n  - 'apps/*'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(dir, "apps", "web")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "package.json"), []byte(`{"name": "web"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := workspace.Resolve(appDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ws.MonorepoRoot != dir {
+		t.Errorf("MonorepoRoot = %q, want %q", ws.MonorepoRoot, dir)
+	}
+	if ws.Subdir != "apps/web" {
+		t.Errorf("Subdir = %q, want %q", ws.Subdir, "apps/web")
+	}
+	if ws.Monorepo == nil || ws.Monorepo.Type != workspace.WorkspacePnpm {
+		t.Errorf("Monorepo = %+v, want type pnpm", ws.Monorepo)
+	}
+}
+
+func TestResolveWithSubdir_Flags(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pnpm-workspace.yaml"), []byte("packages:\n  - 'apps/*'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(dir, "apps", "web")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "package.json"), []byte(`{"name": "web"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. With --dir apps/web
+	wsDir, err := workspace.ResolveWithSubdir(dir, "apps/web", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if wsDir.Root != appDir {
+		t.Errorf("ws.Root = %q, want %q", wsDir.Root, appDir)
+	}
+	if wsDir.Subdir != "apps/web" {
+		t.Errorf("ws.Subdir = %q, want 'apps/web'", wsDir.Subdir)
+	}
+
+	// 2. With --workspace web
+	wsPkg, err := workspace.ResolveWithSubdir(dir, "", "web")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if wsPkg.Root != appDir {
+		t.Errorf("ws.Root = %q, want %q", wsPkg.Root, appDir)
+	}
+	if wsPkg.Subdir != "apps/web" {
+		t.Errorf("ws.Subdir = %q, want 'apps/web'", wsPkg.Subdir)
+	}
+
+	// 3. Error on nonexistent dir
+	_, err = workspace.ResolveWithSubdir(dir, "nonexistent", "")
+	if err == nil {
+		t.Fatal("expected error for nonexistent --dir")
+	}
+
+	// 4. Error on nonexistent workspace
+	_, err = workspace.ResolveWithSubdir(dir, "", "unknown-pkg")
+	if err == nil {
+		t.Fatal("expected error for nonexistent --workspace")
+	}
+}
