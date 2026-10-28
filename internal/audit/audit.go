@@ -111,7 +111,7 @@ var codePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`process\.env\[['"]([A-Za-z0-9_]+)['"]\]`),
 	// Python
 	regexp.MustCompile(`os\.environ\.get\(['"]([A-Za-z0-9_]+)['"]\)`),
-	regexp.MustCompile(`os\.environ\['([A-Za-z0-9_]+)'\]`),
+	regexp.MustCompile(`os\.environ\[['"]([A-Za-z0-9_]+)['"]\]`),
 	regexp.MustCompile(`os\.getenv\(['"]([A-Za-z0-9_]+)['"]\)`),
 	// Go
 	regexp.MustCompile(`os\.Getenv\(['"]([A-Za-z0-9_]+)['"]\)`),
@@ -227,15 +227,25 @@ func AuditWorkspace(root string, provider string, providerEnvKeys []string) (*Se
 
 	// 3. Collect configured keys from .env files without reading values
 	envKeys := make(map[string]bool)
-	if kMap, err := parseEnvFileKeys(filepath.Join(absRoot, ".env")); err == nil {
-		for k := range kMap {
-			envKeys[k] = true
+	localEnvFiles := []string{
+		".env",
+		".env.local",
+		".env.production",
+		".env.production.local",
+	}
+	for _, f := range localEnvFiles {
+		if kMap, err := parseEnvFileKeys(filepath.Join(absRoot, f)); err == nil {
+			for k := range kMap {
+				envKeys[k] = true
+			}
 		}
 	}
 	if monorepoRoot != "" {
-		if kMap, err := parseEnvFileKeys(filepath.Join(monorepoRoot, ".env")); err == nil {
-			for k := range kMap {
-				envKeys[k] = true
+		for _, f := range localEnvFiles {
+			if kMap, err := parseEnvFileKeys(filepath.Join(monorepoRoot, f)); err == nil {
+				for k := range kMap {
+					envKeys[k] = true
+				}
 			}
 		}
 	}

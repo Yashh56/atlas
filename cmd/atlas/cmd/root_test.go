@@ -196,23 +196,61 @@ func TestMonorepoResolution_NonInteractive_MultiplePackages(t *testing.T) {
 
 func TestHasRootAppFramework(t *testing.T) {
 	tempDir := t.TempDir()
-	if hasRootAppFramework(tempDir) {
+	if hasRootAppFramework(tempDir, false) || hasRootAppFramework(tempDir, true) {
 		t.Errorf("empty dir should not have root app framework")
 	}
 
-	// With next.config.js
+	// With next.config.js (recognized for both monorepo and non-monorepo root)
 	nextConfig := filepath.Join(tempDir, "next.config.js")
 	_ = os.WriteFile(nextConfig, []byte("module.exports = {};"), 0644)
-	if !hasRootAppFramework(tempDir) {
-		t.Errorf("expected next.config.js to indicate app framework")
+	if !hasRootAppFramework(tempDir, false) {
+		t.Errorf("expected next.config.js to indicate app framework for non-monorepo")
+	}
+	if !hasRootAppFramework(tempDir, true) {
+		t.Errorf("expected next.config.js to indicate app framework for monorepo root")
 	}
 	_ = os.Remove(nextConfig)
 
-	// With package.json containing build script
+	// With package.json containing generic build script
 	pkgJSON := filepath.Join(tempDir, "package.json")
-	_ = os.WriteFile(pkgJSON, []byte(`{"scripts": {"build": "next build"}}`), 0644)
-	if !hasRootAppFramework(tempDir) {
-		t.Errorf("expected build script to indicate app framework")
+	_ = os.WriteFile(pkgJSON, []byte(`{"scripts": {"build": "turbo run build"}}`), 0644)
+	if !hasRootAppFramework(tempDir, false) {
+		t.Errorf("expected generic build script to indicate app framework for non-monorepo")
 	}
+	if hasRootAppFramework(tempDir, true) {
+		t.Errorf("generic build script should be ignored for monorepo root")
+	}
+
+	// With package.json containing framework dependency (e.g. express)
+	_ = os.WriteFile(pkgJSON, []byte(`{"scripts": {"build": "turbo run build"}, "dependencies": {"express": "^4.18.2"}}`), 0644)
+	if !hasRootAppFramework(tempDir, true) {
+		t.Errorf("expected framework dependency to indicate app framework for monorepo root")
+	}
+	_ = os.Remove(pkgJSON)
+
+	// Non-JS app markers: manage.py, Pipfile, uv.lock, poetry.lock, requirements.txt, pyproject.toml, Cargo.toml
+	nonJSFiles := []string{"manage.py", "Pipfile", "uv.lock", "poetry.lock", "requirements.txt", "pyproject.toml", "Cargo.toml"}
+	for _, f := range nonJSFiles {
+		filePath := filepath.Join(tempDir, f)
+		_ = os.WriteFile(filePath, []byte(""), 0644)
+		if !hasRootAppFramework(tempDir, false) {
+			t.Errorf("expected %s to indicate app framework for non-monorepo", f)
+		}
+		if !hasRootAppFramework(tempDir, true) {
+			t.Errorf("expected %s to indicate app framework for monorepo root", f)
+		}
+		_ = os.Remove(filePath)
+	}
+
+	// go.mod is recognized only if !isMonorepoRoot
+	goMod := filepath.Join(tempDir, "go.mod")
+	_ = os.WriteFile(goMod, []byte("module example.com/app\n"), 0644)
+	if !hasRootAppFramework(tempDir, false) {
+		t.Errorf("expected go.mod to indicate app framework for non-monorepo")
+	}
+	if hasRootAppFramework(tempDir, true) {
+		t.Errorf("expected go.mod to NOT indicate root app framework for monorepo root")
+	}
+	_ = os.Remove(goMod)
 }
 

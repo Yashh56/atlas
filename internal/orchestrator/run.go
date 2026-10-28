@@ -955,7 +955,7 @@ func executeDeploy(
 		}
 
 		if opts.IsInteractive {
-			proceed, _ := cliutil.PromptConfirm("Some environment variables required by your application are not set. Deploy anyway?")
+			proceed, _ := cliutil.PromptConfirm("Some environment variables required by your application were not found locally (if configured in your remote deploy provider dashboard, you can safely continue). Deploy anyway?")
 			if !proceed {
 				return fmt.Errorf("deployment aborted: missing required environment variables")
 			}

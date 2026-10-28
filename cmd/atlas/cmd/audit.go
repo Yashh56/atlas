@@ -28,7 +28,7 @@ var auditCmd = &cobra.Command{
 }
 
 func init() {
-	auditCmd.Flags().StringVar(&auditProviderFlag, "provider", "", "provider name to check")
+	auditCmd.Flags().StringVar(&auditProviderFlag, "provider", "", "target deployment provider (remote key sync planned for v0.3.0)")
 	auditCmd.Flags().BoolVar(&auditStrictFlag, "strict", false, "exit with code 1 if missing secrets found")
 	auditCmd.Flags().StringVar(&auditDirFlag, "dir", "", "target subdirectory within a monorepo (e.g. apps/web)")
 	auditCmd.Flags().StringVar(&auditWorkspaceFlag, "workspace", "", "target package name within a monorepo (e.g. web or @myorg/web)")
@@ -80,7 +80,7 @@ func runAudit(cmd *cobra.Command, args []string) error {
 	fmt.Println(cliutil.FormatHeader("PRE-FLIGHT SECRET AUDIT"))
 	fmt.Printf("  %-12s %s\n", cliutil.StyleSubtext.Render("Target:"), cliutil.StyleHighlight.Render(ws.Root))
 	if auditProviderFlag != "" {
-		fmt.Printf("  %-12s %s\n", cliutil.StyleSubtext.Render("Provider:"), cliutil.StyleHighlight.Render(auditProviderFlag))
+		fmt.Printf("  %-12s %s (remote key sync planned for v0.3.0; evaluating local environment)\n", cliutil.StyleSubtext.Render("Provider:"), cliutil.StyleHighlight.Render(auditProviderFlag))
 	}
 	fmt.Println()
 

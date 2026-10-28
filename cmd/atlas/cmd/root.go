@@ -87,7 +87,7 @@ func init() {
 	rootCmd.Flags().StringVar(&pathFlag, "path", "", "project path (alternative to positional arg, for paths that collide with a subcommand name)")
 	rootCmd.Flags().StringVar(&dirFlag, "dir", "", "target subdirectory within a monorepo (e.g. apps/web)")
 	rootCmd.Flags().StringVar(&workspaceFlag, "workspace", "", "target package name within a monorepo (e.g. web or @myorg/web)")
-	rootCmd.Flags().BoolVar(&strictEnvFlag, "strict-env", false, "abort deployment if any required environment variables are missing")
+	rootCmd.Flags().BoolVar(&strictEnvFlag, "strict-env", false, "abort deployment if any required environment variables are missing from local environment or .env files")
 	rootCmd.Flags().StringVar(&deployModel, "model", "", "LLM provider to use (anthropic, openai, etc.)")
 	rootCmd.Flags().StringVar(&deployAction, "action", "", "action mode: build, test, deploy, test-and-deploy")
 	rootCmd.Flags().StringVar(&deployProvider, "provider", "", "deployment provider (vercel, render, netlify)")
@@ -183,7 +183,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if dirFlag == "" && workspaceFlag == "" && ws.Monorepo != nil && len(ws.Monorepo.Packages) > 1 && !hasRootAppFramework(ws.Root) {
+	if dirFlag == "" && workspaceFlag == "" && ws.Monorepo != nil && len(ws.Monorepo.Packages) > 1 && !hasRootAppFramework(ws.Root, true) {
 		if !isInteractive {
 			names := make([]string, len(ws.Monorepo.Packages))
 			for i, p := range ws.Monorepo.Packages {
@@ -282,7 +282,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	return orchestrator.Run(cmd.Context(), path, strings.ToLower(deployProvider), opts)
 }
 
-func hasRootAppFramework(root string) bool {
+func hasRootAppFramework(root string, isMonorepoRoot bool) bool {
 	prefixes := []string{
 		"next.config.",
 		"vite.config.",
@@ -305,10 +305,22 @@ func hasRootAppFramework(root string) bool {
 		}
 	}
 
-	for _, f := range []string{"Cargo.toml", "requirements.txt", "pyproject.toml"} {
+	nonJSFiles := []string{
+		"manage.py",
+		"Pipfile",
+		"uv.lock",
+		"poetry.lock",
+		"requirements.txt",
+		"pyproject.toml",
+		"Cargo.toml",
+	}
+	for _, f := range nonJSFiles {
 		if fileExists(filepath.Join(root, f)) {
 			return true
 		}
+	}
+	if !isMonorepoRoot && fileExists(filepath.Join(root, "go.mod")) {
+		return true
 	}
 
 	pkgPath := filepath.Join(root, "package.json")
@@ -319,8 +331,10 @@ func hasRootAppFramework(root string) bool {
 			DevDependencies map[string]string `json:"devDependencies"`
 		}
 		if err := json.Unmarshal(data, &pkg); err == nil {
-			if b, ok := pkg.Scripts["build"]; ok && strings.TrimSpace(b) != "" {
-				return true
+			if !isMonorepoRoot {
+				if b, ok := pkg.Scripts["build"]; ok && strings.TrimSpace(b) != "" {
+					return true
+				}
 			}
 			targetDeps := []string{"next", "vite", "react", "vue", "svelte", "express", "hono"}
 			for _, dep := range targetDeps {

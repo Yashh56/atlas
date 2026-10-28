@@ -31,7 +31,7 @@ atlas [path] [flags]
 | `--output-dir <path>` | Manually specify the static output directory for deployment (optional) |
 | `--allow-dirty` | Skip the uncommitted-changes check and proceed anyway |
 | `--auto-rollback-on-unhealthy` | Automatically rollback without prompting if post-deploy health check fails |
-| `--strict-env` | Abort deployment immediately if any required environment variables are missing |
+| `--strict-env` | Abort deployment if any required environment variables are missing from local environment or .env files |
 | `--yes`, `-y`, `--non-interactive` | Auto-approve deployment and run non-interactively without prompting |
 | `--json` | Output in machine-readable JSON format and suppress interactive prompts |
 
@@ -351,7 +351,7 @@ atlas doctor [path] [flags]
 
 ## `atlas audit`
 
-Scan templates (`.env.example`, `.env.sample`, `.env.template`) and source code (`process.env`, `os.environ`, `os.Getenv`) for required environment variables and verify their configuration status.
+Scan templates (`.env.example`, `.env.sample`, `.env.template`, and `.env.local.example`) and source code (`process.env`, `os.environ`, `os.Getenv`) for required environment variables and verify their configuration status.
 
 ```bash
 atlas audit [path] [flags]
@@ -361,15 +361,15 @@ atlas audit [path] [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--provider <name>` | Filter or evaluate against a target provider (e.g. `vercel`, `render`, `netlify`) |
+| `--provider <name>` | Target deployment provider (remote key sync planned for v0.3.0) |
 | `--strict` | Exit with code 1 if any missing environment variables are discovered |
 | `--dir <path>` | Target a specific subdirectory within a monorepo |
 | `--workspace <name>` | Target a specific package by name in a monorepo |
 | `--json` | Output machine-readable JSON containing the `SecretAuditReport` |
 
 <Callout type="info">
-  **Zero Secret Leaks**  
-  Atlas never stores, prints, or inspects secret values. The audit strictly tracks variable names, occurrences, and presence/absence.
+  **Zero Secret Leaks & Strict Verification**  
+  Atlas never stores, prints, or inspects secret values. The audit strictly tracks variable names, occurrences, and presence/absence. During deployment, `--strict-env` verifies that all required variables exist in the local environment or local `.env` files before proceeding.
 </Callout>
 
 ### Examples
@@ -379,14 +379,15 @@ atlas audit [path] [flags]
     ```bash
     $ atlas audit ./apps/web
     PRE-FLIGHT SECRET AUDIT
-      Workspace: D:/projects/monorepo/apps/web
+      Target:      D:/projects/monorepo/apps/web
 
-      DATABASE_URL          .env.example          FOUND (local)
-      NEXT_PUBLIC_API_URL   src/lib/api.ts:12     FOUND (local)
-      STRIPE_SECRET_KEY     .env.example          MISSING
+      KEY                   SOURCE           STATUS
+      ───────────────────   ──────────────   ──────────────
+      DATABASE_URL          .env.example     ✓ found local
+      NEXT_PUBLIC_API_URL   src/lib/api.ts   ✓ found local
+      STRIPE_SECRET_KEY     .env.example     ✗ missing
 
-    Found 2 configured, 1 missing environment variables.
-    ! Warning: 1 required environment variable(s) are missing.
+    ⚠ Found 2 configured, 1 missing environment variable(s).
     ```
   </Tab>
   <Tab value="JSON Output">

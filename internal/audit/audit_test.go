@@ -72,6 +72,7 @@ const nodeEnv = process.env.NODE_ENV;
 import os
 db = os.environ.get("PY_DB_URL")
 secret = os.environ['PY_SECRET']
+db_url = os.environ["DATABASE_URL"]
 mode = os.getenv("PY_MODE")
 `
 	if err := os.WriteFile(pyFile, []byte(pyContent), 0644); err != nil {
@@ -81,7 +82,7 @@ mode = os.getenv("PY_MODE")
 	if err != nil {
 		t.Fatalf("scanSourceFile(pyFile) failed: %v", err)
 	}
-	expectedPy := map[string]bool{"PY_DB_URL": true, "PY_SECRET": true, "PY_MODE": true}
+	expectedPy := map[string]bool{"PY_DB_URL": true, "PY_SECRET": true, "DATABASE_URL": true, "PY_MODE": true}
 	for _, k := range pyKeys {
 		if !expectedPy[k] {
 			t.Errorf("unexpected key in Py: %s", k)
@@ -194,5 +195,28 @@ func TestAuditWorkspace_FullFlow(t *testing.T) {
 		if report.Secrets[i-1].Key >= report.Secrets[i].Key {
 			t.Errorf("secrets not sorted alphabetically: %s >= %s", report.Secrets[i-1].Key, report.Secrets[i].Key)
 		}
+	}
+}
+
+func TestAuditWorkspace_LocalEnvFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	envExample := filepath.Join(tmpDir, ".env.example")
+	_ = os.WriteFile(envExample, []byte("VAR_LOCAL=\nVAR_PROD=\nVAR_PROD_LOCAL=\n"), 0644)
+
+	_ = os.WriteFile(filepath.Join(tmpDir, ".env.local"), []byte("VAR_LOCAL=1\n"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, ".env.production"), []byte("VAR_PROD=1\n"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, ".env.production.local"), []byte("VAR_PROD_LOCAL=1\n"), 0644)
+
+	report, err := AuditWorkspace(tmpDir, "", nil)
+	if err != nil {
+		t.Fatalf("AuditWorkspace failed: %v", err)
+	}
+
+	if report.MissingCount != 0 {
+		t.Errorf("expected 0 missing, got %d", report.MissingCount)
+	}
+	if report.FoundCount != 3 {
+		t.Errorf("expected 3 found, got %d", report.FoundCount)
 	}
 }
