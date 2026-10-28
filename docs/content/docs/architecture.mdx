@@ -72,8 +72,8 @@ The metadata file (`credentials.json`) tracks *which* method is being used and *
 
 This is the **only** Atlas subsystem that is global rather than project-local.
 
-### `internal/workspace` — Workspace resolution
-Validates that a given path exists and identifies the git root (by walking upward looking for `.git`). The resolved `Workspace` struct is the input boundary for the orchestrator — nothing downstream deals with raw paths.
+### `internal/workspace` — Workspace resolution & monorepo discovery
+Validates that a given path exists and identifies the git root (by walking upward looking for `.git`). Also detects monorepo structures (`pnpm-workspace.yaml`, `turbo.json`, `nx.json`, `lerna.json`, or root `package.json` `workspaces`), resolves package subdirectories via `--dir` or `--workspace`, and allows sub-packages to inherit root lockfiles (`pnpm-lock.yaml`, `bun.lockb`, `yarn.lock`, `package-lock.json`). The resolved `Workspace` struct is the input boundary for the orchestrator — nothing downstream deals with raw paths.
 
 ### `internal/session` — Session lifecycle
 Creates a timestamped session directory under `.atlas/sessions/<id>/` for each `atlas deploy` run. Each session gets its own log directory, context JSON files, and planner state. Sessions are **project-local** — they're scoped to the workspace they were started against.
@@ -103,6 +103,9 @@ Currently implemented tools:
 
 ### `internal/doctor` — Environment & security diagnostics
 Runs diagnostic checks across developer tools (Git, Node, npm, pnpm, yarn, bun, Go, Python, Docker), OS keychain readiness (`go-keyring` vs `0600` filesystem fallback), authenticated provider credentials, live LLM completion ping latency, and Atlas version status. Emits structured report types (`DiagnosticReport`) consumable by both interactive CLI rendering and automated JSON tooling (`--json`).
+
+### `internal/audit` — Pre-flight secret & environment variable auditing
+Scans templates (`.env.example`, `.env.sample`, `.env.template`, `.env.local.example`) and source files (JS/TS, Python, Go, Ruby, PHP) for referenced environment variables. Checks their configuration state against local OS environment and target deployment providers, while strictly guaranteeing zero secret leakage (values are never captured, printed, or saved). Operates standalone (`atlas audit`) or as a pre-flight deployment gate with `--strict-env`.
 
 ### `internal/llm` — LLM provider resolution
 Wraps [GoAI v0.8.6](https://github.com/zendev-sh/goai) to provide:
