@@ -931,6 +931,9 @@ func executeDeploy(
 	cfg *config.Config, dep *DeploymentState, provider deploy.Provider, providerName string, opts RunOptions,
 ) error {
 	report, auditErr := audit.AuditWorkspace(ws.Root, providerName, nil)
+	if auditErr != nil && opts.StrictEnv {
+		return fmt.Errorf("pre-flight secret audit failed: %w", auditErr)
+	}
 	if auditErr == nil && report.MissingCount > 0 {
 		if !opts.JSONMode {
 			fmt.Printf("\n%s Pre-flight secret audit found %d missing environment variable(s):\n", styleWarn, report.MissingCount)

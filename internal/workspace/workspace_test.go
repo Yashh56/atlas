@@ -156,3 +156,39 @@ func TestResolveWithSubdir_Flags(t *testing.T) {
 		t.Fatal("expected error for nonexistent --workspace")
 	}
 }
+
+func TestResolveWithSubdir_OutsideToMonorepo(t *testing.T) {
+	parent := t.TempDir()
+	monorepoDir := filepath.Join(parent, "repo")
+	if err := os.MkdirAll(monorepoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(monorepoDir, "pnpm-workspace.yaml"), []byte("packages:\n  - 'packages/*'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkgDir := filepath.Join(monorepoDir, "packages", "api")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"name": "api"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := workspace.ResolveWithSubdir(parent, filepath.Join("repo", "packages", "api"), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ws.Root != pkgDir {
+		t.Errorf("ws.Root = %q, want %q", ws.Root, pkgDir)
+	}
+	if ws.MonorepoRoot != monorepoDir {
+		t.Errorf("ws.MonorepoRoot = %q, want %q", ws.MonorepoRoot, monorepoDir)
+	}
+	if ws.Subdir != "packages/api" {
+		t.Errorf("ws.Subdir = %q, want 'packages/api'", ws.Subdir)
+	}
+	if ws.Monorepo == nil || ws.Monorepo.Type != workspace.WorkspacePnpm {
+		t.Errorf("expected pnpm monorepo info, got: %+v", ws.Monorepo)
+	}
+}
+

@@ -220,3 +220,52 @@ func TestAuditWorkspace_LocalEnvFiles(t *testing.T) {
 		t.Errorf("expected 3 found, got %d", report.FoundCount)
 	}
 }
+
+func TestAuditWorkspace_EmptyEnvValue(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	envExample := filepath.Join(tmpDir, ".env.example")
+	_ = os.WriteFile(envExample, []byte("SET_VAR=\nEMPTY_QUOTED=\nEMPTY_BARE=\n"), 0644)
+
+	envFile := filepath.Join(tmpDir, ".env")
+	_ = os.WriteFile(envFile, []byte("SET_VAR=secret_value\nEMPTY_QUOTED=\"\"\nEMPTY_BARE=\n"), 0644)
+
+	report, err := AuditWorkspace(tmpDir, "", nil)
+	if err != nil {
+		t.Fatalf("AuditWorkspace failed: %v", err)
+	}
+
+	statusMap := make(map[string]SecretStatus)
+	for _, s := range report.Secrets {
+		statusMap[s.Key] = s.Status
+	}
+
+	if statusMap["SET_VAR"] != StatusFoundLocal {
+		t.Errorf("expected SET_VAR to be %v, got %v", StatusFoundLocal, statusMap["SET_VAR"])
+	}
+	if statusMap["EMPTY_QUOTED"] != StatusMissing {
+		t.Errorf("expected EMPTY_QUOTED to be %v, got %v", StatusMissing, statusMap["EMPTY_QUOTED"])
+	}
+	if statusMap["EMPTY_BARE"] != StatusMissing {
+		t.Errorf("expected EMPTY_BARE to be %v, got %v", StatusMissing, statusMap["EMPTY_BARE"])
+	}
+	if report.MissingCount != 2 {
+		t.Errorf("expected 2 missing keys, got %d", report.MissingCount)
+	}
+}
+
+func TestAuditWorkspace_TemplateError(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Make .env.example a directory so reading it fails with an error (not IsNotExist)
+	envExample := filepath.Join(tmpDir, ".env.example")
+	if err := os.Mkdir(envExample, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := AuditWorkspace(tmpDir, "", nil)
+	if err == nil {
+		t.Fatal("expected error when .env.example is an unreadable directory, got nil")
+	}
+}
+

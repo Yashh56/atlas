@@ -147,3 +147,34 @@ func TestDetectMonorepo_FromSubdirectory(t *testing.T) {
 		t.Errorf("mr.Root = %q, want %q", mr.Root, root)
 	}
 }
+
+func TestDiscoverPackages_ExclusionPattern(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(dir, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n  - '!packages/private'\n")
+	writeWorkspaceFile(t, filepath.Join(dir, "packages", "public", "package.json"), `{"name": "public-pkg"}`)
+	writeWorkspaceFile(t, filepath.Join(dir, "packages", "private", "package.json"), `{"name": "private-pkg"}`)
+
+	pkgs := workspace.DiscoverPackages(dir)
+	var names []string
+	for _, p := range pkgs {
+		names = append(names, p.Name)
+	}
+
+	for _, name := range names {
+		if name == "private-pkg" {
+			t.Errorf("expected private-pkg to be excluded, but got discovered packages: %v", names)
+		}
+	}
+
+	foundPublic := false
+	for _, name := range names {
+		if name == "public-pkg" {
+			foundPublic = true
+			break
+		}
+	}
+	if !foundPublic {
+		t.Errorf("expected public-pkg to be discovered, got: %v", names)
+	}
+}
+

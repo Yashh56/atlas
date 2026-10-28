@@ -136,7 +136,20 @@ func DiscoverPackages(monorepoRoot string) []PackageInfo {
 	patterns = append(patterns, standardPatterns...)
 
 	var foundDirs []string
+	excludedDirs := make(map[string]bool)
 	for _, pat := range patterns {
+		trimmed := strings.TrimSpace(pat)
+		if strings.HasPrefix(trimmed, "!") {
+			excludedPattern := strings.TrimSpace(strings.TrimPrefix(trimmed, "!"))
+			for _, dir := range matchWorkspacePattern(absRoot, excludedPattern) {
+				absDir, err := filepath.Abs(dir)
+				if err != nil {
+					absDir = filepath.Clean(dir)
+				}
+				excludedDirs[absDir] = true
+			}
+			continue
+		}
 		dirs := matchWorkspacePattern(absRoot, pat)
 		foundDirs = append(foundDirs, dirs...)
 	}
@@ -147,7 +160,10 @@ func DiscoverPackages(monorepoRoot string) []PackageInfo {
 	for _, dir := range foundDirs {
 		absDir, err := filepath.Abs(dir)
 		if err != nil {
-			absDir = dir
+			absDir = filepath.Clean(dir)
+		}
+		if excludedDirs[absDir] {
+			continue
 		}
 		if seen[absDir] {
 			continue

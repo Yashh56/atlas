@@ -93,3 +93,39 @@ func TestExecuteDeploy_NonInteractiveProceedsWithWarning(t *testing.T) {
 		t.Errorf("deploy should have been called")
 	}
 }
+
+func TestExecuteDeploy_StrictEnvAuditError(t *testing.T) {
+	tempDir := t.TempDir()
+	envExample := filepath.Join(tempDir, ".env.example")
+	_ = os.Mkdir(envExample, 0755)
+
+	ws := &workspace.Workspace{
+		Root:   tempDir,
+		Exists: true,
+	}
+	sessDir := t.TempDir()
+	planner := NewPlanner("deploy")
+	cfg := &config.Config{Approval: "auto"}
+	dep := NewDeployment("mock")
+	mockProv := &mockDeployProvider{}
+
+	opts := RunOptions{
+		StrictEnv:      true,
+		NonInteractive: true,
+		JSONMode:       true,
+	}
+
+	err := executeDeploy(context.Background(), ws, sessDir, planner, cfg, dep, mockProv, "mock", opts)
+	if err == nil {
+		t.Fatal("expected error due to StrictEnv and audit error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "pre-flight secret audit failed:") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+
+	if mockProv.deployed {
+		t.Errorf("deploy should not have been called when strict env fails")
+	}
+}
+

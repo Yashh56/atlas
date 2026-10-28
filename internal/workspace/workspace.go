@@ -107,26 +107,7 @@ func ResolveWithSubdir(inputPath, dirFlag, workspaceFlag string) (*Workspace, er
 		ws.Root = targetDir
 	}
 
-	// Recompute Subdir
-	if ws.MonorepoRoot != "" {
-		rel, err := filepath.Rel(ws.MonorepoRoot, ws.Root)
-		if err == nil && rel != "." {
-			ws.Subdir = filepath.ToSlash(rel)
-		} else {
-			ws.Subdir = ""
-		}
-	} else if ws.GitRoot != "" {
-		rel, err := filepath.Rel(ws.GitRoot, ws.Root)
-		if err == nil && rel != "." {
-			ws.Subdir = filepath.ToSlash(rel)
-		} else {
-			ws.Subdir = ""
-		}
-	} else {
-		ws.Subdir = ""
-	}
-
-	return ws, nil
+	return Resolve(ws.Root)
 }
 
 // findGitRoot walks up from dir until it finds a directory containing a .git

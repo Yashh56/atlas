@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Yashh56/atlas/internal/workspace"
+	"github.com/joho/godotenv"
 )
 
 type SecretStatus string
@@ -41,50 +42,50 @@ type SecretAuditReport struct {
 // standardSystemEnvVars lists common runtime/system environment variables
 // that should not be flagged as missing application secrets.
 var standardSystemEnvVars = map[string]bool{
-	"NODE_ENV":              true,
-	"PORT":                  true,
-	"HOST":                  true,
-	"HOSTNAME":              true,
-	"CI":                    true,
-	"VERCEL":                true,
-	"VERCEL_ENV":            true,
-	"NETLIFY":               true,
-	"RENDER":                true,
-	"PATH":                  true,
-	"PWD":                   true,
-	"HOME":                  true,
-	"USER":                  true,
-	"SHELL":                 true,
-	"TERM":                  true,
-	"LANG":                  true,
-	"LC_ALL":                true,
-	"TMPDIR":                true,
-	"TEMP":                  true,
-	"TMP":                   true,
-	"SHLVL":                 true,
-	"_":                     true,
-	"EDITOR":                true,
-	"VISUAL":                true,
-	"PAGER":                 true,
-	"PS1":                   true,
-	"LOGNAME":               true,
-	"COLORTERM":             true,
-	"TERM_PROGRAM":          true,
-	"TERM_PROGRAM_VERSION":  true,
-	"SYSTEMROOT":            true,
-	"WINDIR":                true,
-	"COMSPEC":               true,
-	"PATHEXT":               true,
-	"PROMPT":                true,
-	"HOMEDRIVE":             true,
-	"HOMEPATH":              true,
-	"USERPROFILE":           true,
-	"APPDATA":               true,
-	"LOCALAPPDATA":          true,
-	"PROGRAMDATA":           true,
-	"PROGRAMFILES":          true,
-	"PROGRAMFILES(X86)":     true,
-	"COMMONPROGRAMFILES":    true,
+	"NODE_ENV":                true,
+	"PORT":                    true,
+	"HOST":                    true,
+	"HOSTNAME":                true,
+	"CI":                      true,
+	"VERCEL":                  true,
+	"VERCEL_ENV":              true,
+	"NETLIFY":                 true,
+	"RENDER":                  true,
+	"PATH":                    true,
+	"PWD":                     true,
+	"HOME":                    true,
+	"USER":                    true,
+	"SHELL":                   true,
+	"TERM":                    true,
+	"LANG":                    true,
+	"LC_ALL":                  true,
+	"TMPDIR":                  true,
+	"TEMP":                    true,
+	"TMP":                     true,
+	"SHLVL":                   true,
+	"_":                       true,
+	"EDITOR":                  true,
+	"VISUAL":                  true,
+	"PAGER":                   true,
+	"PS1":                     true,
+	"LOGNAME":                 true,
+	"COLORTERM":               true,
+	"TERM_PROGRAM":            true,
+	"TERM_PROGRAM_VERSION":    true,
+	"SYSTEMROOT":              true,
+	"WINDIR":                  true,
+	"COMSPEC":                 true,
+	"PATHEXT":                 true,
+	"PROMPT":                  true,
+	"HOMEDRIVE":               true,
+	"HOMEPATH":                true,
+	"USERPROFILE":             true,
+	"APPDATA":                 true,
+	"LOCALAPPDATA":            true,
+	"PROGRAMDATA":             true,
+	"PROGRAMFILES":            true,
+	"PROGRAMFILES(X86)":       true,
+	"COMMONPROGRAMFILES":      true,
 	"COMMONPROGRAMFILES(X86)": true,
 }
 
@@ -125,16 +126,16 @@ var codePatterns = []*regexp.Regexp{
 }
 
 var supportedExtensions = map[string]bool{
-	".js":   true,
-	".jsx":  true,
-	".ts":   true,
-	".tsx":  true,
-	".mjs":  true,
-	".cjs":  true,
-	".py":   true,
-	".go":   true,
-	".rb":   true,
-	".php":  true,
+	".js":  true,
+	".jsx": true,
+	".ts":  true,
+	".tsx": true,
+	".mjs": true,
+	".cjs": true,
+	".py":  true,
+	".go":  true,
+	".rb":  true,
+	".php": true,
 }
 
 var templateFileNames = []string{
@@ -174,10 +175,15 @@ func AuditWorkspace(root string, provider string, providerEnvKeys []string) (*Se
 	// 1. Scan template files in workspace root
 	for _, tpl := range templateFileNames {
 		tplPath := filepath.Join(absRoot, tpl)
-		if keys, err := parseTemplateKeys(tplPath); err == nil {
-			for _, k := range keys {
-				addKeySource(keySources, k, tpl)
+		keys, err := parseTemplateKeys(tplPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
 			}
+			return nil, err
+		}
+		for _, k := range keys {
+			addKeySource(keySources, k, tpl)
 		}
 	}
 
@@ -185,10 +191,15 @@ func AuditWorkspace(root string, provider string, providerEnvKeys []string) (*Se
 	if monorepoRoot != "" {
 		for _, tpl := range templateFileNames {
 			tplPath := filepath.Join(monorepoRoot, tpl)
-			if keys, err := parseTemplateKeys(tplPath); err == nil {
-				for _, k := range keys {
-					addKeySource(keySources, k, tpl+" (monorepo)")
+			keys, err := parseTemplateKeys(tplPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
 				}
+				return nil, err
+			}
+			for _, k := range keys {
+				addKeySource(keySources, k, tpl+" (monorepo)")
 			}
 		}
 	}
@@ -342,23 +353,16 @@ func parseEnvFileKeys(filePath string) (map[string]bool, error) {
 	defer file.Close()
 
 	keys := make(map[string]bool)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		line = strings.TrimSpace(line)
-
-		if idx := strings.Index(line, "="); idx > 0 {
-			key := strings.TrimSpace(line[:idx])
-			if validKeyRegex.MatchString(key) {
-				keys[key] = true
-			}
+	env, err := godotenv.Parse(bufio.NewReader(file))
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range env {
+		if validKeyRegex.MatchString(key) && value != "" {
+			keys[key] = true
 		}
 	}
-	return keys, scanner.Err()
+	return keys, nil
 }
 
 // scanSourceFile reads source code and extracts environment variable names.
