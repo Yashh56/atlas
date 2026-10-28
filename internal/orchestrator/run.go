@@ -931,8 +931,13 @@ func executeDeploy(
 	cfg *config.Config, dep *DeploymentState, provider deploy.Provider, providerName string, opts RunOptions,
 ) error {
 	report, auditErr := audit.AuditWorkspace(ws.Root, providerName, nil)
-	if auditErr != nil && opts.StrictEnv {
-		return fmt.Errorf("pre-flight secret audit failed: %w", auditErr)
+	if auditErr != nil {
+		if opts.StrictEnv {
+			return fmt.Errorf("pre-flight secret audit failed: %w", auditErr)
+		}
+		if !opts.JSONMode {
+			fmt.Printf("%s Pre-flight secret audit skipped: %v\n", styleWarn, auditErr)
+		}
 	}
 	if auditErr == nil && report.MissingCount > 0 {
 		if !opts.JSONMode {
