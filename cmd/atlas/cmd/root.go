@@ -183,7 +183,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if dirFlag == "" && workspaceFlag == "" && ws.Monorepo != nil && len(ws.Monorepo.Packages) > 1 && !hasRootAppFramework(ws.Root, true) {
+	if dirFlag == "" && workspaceFlag == "" && ws.Monorepo != nil && ws.Root == ws.MonorepoRoot && len(ws.Monorepo.Packages) > 1 && !hasRootAppFramework(ws.Root, true) {
 		if !isInteractive {
 			names := make([]string, len(ws.Monorepo.Packages))
 			for i, p := range ws.Monorepo.Packages {
@@ -218,9 +218,14 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 
 	path = ws.Root
 
-	_ = godotenv.Load(filepath.Join(ws.Root, ".env"))
+	envFiles := []string{".env.production.local", ".env.local", ".env.production", ".env"}
+	for _, f := range envFiles {
+		_ = godotenv.Load(filepath.Join(ws.Root, f))
+	}
 	if ws.MonorepoRoot != "" && ws.MonorepoRoot != ws.Root {
-		_ = godotenv.Load(filepath.Join(ws.MonorepoRoot, ".env"))
+		for _, f := range envFiles {
+			_ = godotenv.Load(filepath.Join(ws.MonorepoRoot, f))
+		}
 	}
 
 	needsWizard := isInteractive && (deployModel == "" || deployAction == "" || (actionNeedsProvider(orchestrator.Action(deployAction)) && deployProvider == ""))

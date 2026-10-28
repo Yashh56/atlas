@@ -369,7 +369,7 @@ atlas audit [path] [flags]
 
 <Callout type="info">
   **Zero Secret Leaks & Strict Verification**  
-  Atlas never stores, prints, or inspects secret values. The audit strictly tracks variable names, occurrences, and presence/absence. During deployment, `--strict-env` verifies that all required variables exist in the local environment or local `.env` files before proceeding.
+  Atlas reads local environment configurations only to verify key presence and non-empty status; secret values are never printed, stored, or exposed in audit reports. During deployment, `--strict-env` verifies that all variables detected by the audit scanner exist in the environment or local `.env` files before proceeding.
 </Callout>
 
 ### Examples

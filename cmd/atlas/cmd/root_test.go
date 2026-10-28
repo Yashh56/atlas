@@ -194,6 +194,55 @@ func TestMonorepoResolution_NonInteractive_MultiplePackages(t *testing.T) {
 	}
 }
 
+func TestMonorepoResolution_ExplicitSubpackage_BypassesRootPrompt(t *testing.T) {
+	origModel := deployModel
+	origAction := deployAction
+	origNonInteractive := nonInteractiveFlag
+	origDirFlag := dirFlag
+	origWorkspaceFlag := workspaceFlag
+	origPathFlag := pathFlag
+	defer func() {
+		deployModel = origModel
+		deployAction = origAction
+		nonInteractiveFlag = origNonInteractive
+		dirFlag = origDirFlag
+		workspaceFlag = origWorkspaceFlag
+		pathFlag = origPathFlag
+	}()
+
+	tempDir := t.TempDir()
+
+	// Create pnpm-workspace.yaml
+	pnpmWs := filepath.Join(tempDir, "pnpm-workspace.yaml")
+	_ = os.WriteFile(pnpmWs, []byte("packages:\n  - 'apps/*'\n"), 0644)
+
+	// Create apps/web and apps/api
+	webDir := filepath.Join(tempDir, "apps", "web")
+	_ = os.MkdirAll(webDir, 0755)
+	_ = os.WriteFile(filepath.Join(webDir, "package.json"), []byte(`{"name": "web"}`), 0644)
+
+	apiDir := filepath.Join(tempDir, "apps", "api")
+	_ = os.MkdirAll(apiDir, 0755)
+	_ = os.WriteFile(filepath.Join(apiDir, "package.json"), []byte(`{"name": "api"}`), 0644)
+
+	deployModel = ""
+	deployAction = ""
+	dirFlag = ""
+	workspaceFlag = ""
+	pathFlag = ""
+	nonInteractiveFlag = false
+
+	cmd := rootCmd
+	cmd.SetArgs([]string{"--path", webDir, "--model", "openai", "--action", "build", "--yes"})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+
+	err := cmd.Execute()
+	if err != nil && strings.Contains(err.Error(), "monorepo detected") && strings.Contains(err.Error(), "with multiple packages") {
+		t.Fatalf("expected subpackage path to bypass root prompt, but got monorepo error: %v", err)
+	}
+}
+
 func TestHasRootAppFramework(t *testing.T) {
 	tempDir := t.TempDir()
 	if hasRootAppFramework(tempDir, false) || hasRootAppFramework(tempDir, true) {
