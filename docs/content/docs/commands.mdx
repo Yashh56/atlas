@@ -23,12 +23,15 @@ atlas [path] [flags]
 | Flag | Description |
 |------|-------------|
 | `--path <path>` | Project path (alternative to positional arg, use this for paths that collide with a subcommand name) |
+| `--dir <path>` | Target subdirectory within a monorepo (e.g. `apps/web`) |
+| `--workspace <name>` | Target package name within a monorepo (e.g. `web` or `@myorg/web`) |
 | `--model <name>` | LLM provider to use (e.g., `anthropic`, `openai`) (optional) |
 | `--action <mode>` | Action mode: `build`, `test`, `deploy`, `test-and-deploy` (optional) |
 | `--provider <name>` | Deployment provider: `vercel`, `render`, `netlify` (optional; `fly` and `railway` are planned for v0.3.0) |
 | `--output-dir <path>` | Manually specify the static output directory for deployment (optional) |
 | `--allow-dirty` | Skip the uncommitted-changes check and proceed anyway |
 | `--auto-rollback-on-unhealthy` | Automatically rollback without prompting if post-deploy health check fails |
+| `--strict-env` | Abort deployment if any required environment variables are missing from local environment or .env files |
 | `--yes`, `-y`, `--non-interactive` | Auto-approve deployment and run non-interactively without prompting |
 | `--json` | Output in machine-readable JSON format and suppress interactive prompts |
 
@@ -339,6 +342,73 @@ atlas doctor [path] [flags]
           ]
         }
       ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## `atlas audit`
+
+Scan templates (`.env.example`, `.env.sample`, `.env.template`, and `.env.local.example`) and source code (`process.env`, `os.environ`, `os.Getenv`) for required environment variables and verify their configuration status.
+
+```bash
+atlas audit [path] [flags]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--provider <name>` | Target deployment provider (remote key sync planned for v0.3.0) |
+| `--strict` | Exit with code 1 if any missing environment variables are discovered |
+| `--dir <path>` | Target a specific subdirectory within a monorepo |
+| `--workspace <name>` | Target a specific package by name in a monorepo |
+| `--json` | Output machine-readable JSON containing the `SecretAuditReport` |
+
+<Callout type="info">
+  **Zero Secret Leaks & Strict Verification**  
+  Atlas reads local environment configurations only to verify key presence and non-empty status; secret values are never printed, stored, or exposed in audit reports. During deployment, `--strict-env` verifies that all variables detected by the audit scanner exist in the environment or local `.env` files before proceeding.
+</Callout>
+
+### Examples
+
+<Tabs items={['Table Output', 'JSON Output']}>
+  <Tab value="Table Output">
+    ```bash
+    $ atlas audit ./apps/web
+    PRE-FLIGHT SECRET AUDIT
+      Target:      D:/projects/monorepo/apps/web
+
+      KEY                   SOURCE           STATUS
+      ───────────────────   ──────────────   ──────────────
+      DATABASE_URL          .env.example     ✓ found local
+      NEXT_PUBLIC_API_URL   src/lib/api.ts   ✓ found local
+      STRIPE_SECRET_KEY     .env.example     ✗ missing
+
+    ⚠ Found 2 configured, 1 missing environment variable(s).
+    ```
+  </Tab>
+  <Tab value="JSON Output">
+    ```bash
+    $ atlas audit ./apps/web --json
+    {
+      "workspace_root": "D:/projects/monorepo/apps/web",
+      "secrets": [
+        {
+          "key": "DATABASE_URL",
+          "source": ".env.example",
+          "status": "found_local"
+        },
+        {
+          "key": "STRIPE_SECRET_KEY",
+          "source": ".env.example",
+          "status": "missing"
+        }
+      ],
+      "missing_count": 1,
+      "found_count": 1
     }
     ```
   </Tab>

@@ -11,6 +11,7 @@ import (
 	"github.com/Yashh56/atlas/internal/config"
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/llm"
+	keyring "github.com/zalando/go-keyring"
 )
 
 type testMockClient struct {
@@ -145,6 +146,12 @@ func TestCheckLLM_AutoDetectMistral(t *testing.T) {
 }
 
 func TestCheckLLM_NoAPIKeyConfigured(t *testing.T) {
+	keyring.MockInit()
+	tempDir := t.TempDir()
+	t.Setenv("APPDATA", tempDir)
+	t.Setenv("HOME", tempDir)
+	t.Setenv("XDG_CONFIG_HOME", tempDir)
+
 	for _, p := range llm.KnownProviders {
 		if p.EnvVar != "" {
 			t.Setenv(p.EnvVar, "")
@@ -152,7 +159,6 @@ func TestCheckLLM_NoAPIKeyConfigured(t *testing.T) {
 		}
 	}
 
-	tempDir := t.TempDir()
 	cat := checkLLM(context.Background(), tempDir)
 
 	if len(cat.Checks) == 0 {

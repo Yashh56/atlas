@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Yashh56/atlas/internal/orchestrator"
@@ -259,6 +260,34 @@ func assertStringPtr(t *testing.T, field string, got, want *string) {
 	}
 	if *got != *want {
 		t.Errorf("%s = %q, want %q", field, *got, *want)
+	}
+}
+
+func TestAnalyzeProject_MonorepoParentLockfile(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "pnpm-workspace.yaml", "packages:\n  - 'apps/*'\n")
+	writeFixture(t, root, "pnpm-lock.yaml", "")
+
+	appDir := filepath.Join(root, "apps", "web")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, appDir, "package.json", `{
+		"dependencies": {"next": "14.0.0", "react": "18.0.0"}
+	}`)
+
+	s := session.New("test-session")
+	tool := tools.AnalyzeProject{WorkspaceRoot: appDir}
+	res, err := tool.Execute(context.Background(), s)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("tool execution failed: %s", res.Error)
+	}
+
+	if !strings.Contains(res.Output, "package_manager: pnpm") {
+		t.Errorf("output %q does not contain 'package_manager: pnpm'", res.Output)
 	}
 }
 

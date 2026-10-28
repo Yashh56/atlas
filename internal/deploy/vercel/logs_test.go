@@ -1,4 +1,4 @@
-﻿package vercel
+package vercel
 
 import (
 	"bytes"
@@ -76,7 +76,7 @@ func TestVercelProvider_Logs(t *testing.T) {
 		d := &deploy.Deployment{URL: "https://foo.vercel.app"}
 		var buf bytes.Buffer
 
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
 
 		err := p.Logs(ctx, d, &buf, true)

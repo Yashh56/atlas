@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Yashh56/atlas/internal/audit"
 	"github.com/Yashh56/atlas/internal/build"
 	"github.com/Yashh56/atlas/internal/cliutil"
 	"github.com/Yashh56/atlas/internal/config"
@@ -61,6 +62,7 @@ type RunOptions struct {
 	OutputDir      string
 	AutoRollback   bool
 	JSONMode       bool
+	StrictEnv      bool
 }
 
 // PipelineSummary is emitted to stdout on run completion when JSONMode is enabled.
@@ -928,6 +930,46 @@ func executeDeploy(
 	ctx context.Context, ws *workspace.Workspace, sessDir string, planner *PlannerState,
 	cfg *config.Config, dep *DeploymentState, provider deploy.Provider, providerName string, opts RunOptions,
 ) error {
+	report, auditErr := audit.AuditWorkspace(ws.Root, providerName, nil)
+	if auditErr != nil {
+		if opts.StrictEnv {
+			return fmt.Errorf("pre-flight secret audit failed: %w", auditErr)
+		}
+		if !opts.JSONMode {
+			fmt.Printf("%s Pre-flight secret audit skipped: %v\n", styleWarn, auditErr)
+		}
+	}
+	if auditErr == nil && report.MissingCount > 0 {
+		if !opts.JSONMode {
+			fmt.Printf("\n%s Pre-flight secret audit found %d missing environment variable(s):\n", styleWarn, report.MissingCount)
+			count := 0
+			for _, s := range report.Secrets {
+				if s.Status == audit.StatusMissing {
+					fmt.Printf("   %s %s (from %s)\n", styleCross, cliutil.StyleHighlight.Render(s.Key), cliutil.StyleMuted.Render(s.Source))
+					count++
+					if count >= 10 {
+						break
+					}
+				}
+			}
+			if report.MissingCount > 10 {
+				fmt.Printf("   ... and %d more\n", report.MissingCount-10)
+			}
+			fmt.Println()
+		}
+
+		if opts.StrictEnv {
+			return fmt.Errorf("pre-flight secret audit failed: %d missing environment variable(s) and --strict-env is set", report.MissingCount)
+		}
+
+		if opts.IsInteractive {
+			proceed, _ := cliutil.PromptConfirm("Some environment variables required by your application were not found locally (if configured in your remote deploy provider dashboard, you can safely continue). Deploy anyway?")
+			if !proceed {
+				return fmt.Errorf("deployment aborted: missing required environment variables")
+			}
+		}
+	}
+
 	var approved bool
 	if opts.NonInteractive {
 		AutoApprove(dep, "non-interactive")
