@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -114,3 +116,103 @@ func TestProviderValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestFlagsRegistration(t *testing.T) {
+	flags := []string{"dir", "workspace", "strict-env"}
+	for _, f := range flags {
+		if rootCmd.Flags().Lookup(f) == nil {
+			t.Errorf("expected flag --%s to be registered on rootCmd", f)
+		}
+	}
+
+	foundAudit := false
+	for _, c := range rootCmd.Commands() {
+		if c.Name() == "audit" {
+			foundAudit = true
+			break
+		}
+	}
+	if !foundAudit {
+		t.Errorf("expected audit subcommand to be registered on rootCmd")
+	}
+}
+
+func TestMonorepoResolution_NonInteractive_MultiplePackages(t *testing.T) {
+	origModel := deployModel
+	origAction := deployAction
+	origNonInteractive := nonInteractiveFlag
+	origDirFlag := dirFlag
+	origWorkspaceFlag := workspaceFlag
+	defer func() {
+		deployModel = origModel
+		deployAction = origAction
+		nonInteractiveFlag = origNonInteractive
+		dirFlag = origDirFlag
+		workspaceFlag = origWorkspaceFlag
+	}()
+
+	tempDir := t.TempDir()
+
+	// Create pnpm-workspace.yaml
+	pnpmWs := filepath.Join(tempDir, "pnpm-workspace.yaml")
+	_ = os.WriteFile(pnpmWs, []byte("packages:\n  - 'apps/*'\n"), 0644)
+
+	// Create apps/web and apps/api
+	webDir := filepath.Join(tempDir, "apps", "web")
+	_ = os.MkdirAll(webDir, 0755)
+	_ = os.WriteFile(filepath.Join(webDir, "package.json"), []byte(`{"name": "web"}`), 0644)
+
+	apiDir := filepath.Join(tempDir, "apps", "api")
+	_ = os.MkdirAll(apiDir, 0755)
+	_ = os.WriteFile(filepath.Join(apiDir, "package.json"), []byte(`{"name": "api"}`), 0644)
+
+	deployModel = ""
+	deployAction = ""
+	dirFlag = ""
+	workspaceFlag = ""
+	nonInteractiveFlag = false
+
+	cmd := rootCmd
+	cmd.SetArgs([]string{"--path", tempDir, "--model", "openai", "--action", "build", "--yes"})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error due to unselected monorepo package in non-interactive mode, got nil")
+	}
+
+	expectedSubstrings := []string{
+		"monorepo detected",
+		"with multiple packages",
+		"Please specify target package with --workspace <name> or --dir <path>",
+	}
+	for _, sub := range expectedSubstrings {
+		if !strings.Contains(err.Error(), sub) {
+			t.Errorf("expected error to contain %q, got: %s", sub, err.Error())
+		}
+	}
+}
+
+func TestHasRootAppFramework(t *testing.T) {
+	tempDir := t.TempDir()
+	if hasRootAppFramework(tempDir) {
+		t.Errorf("empty dir should not have root app framework")
+	}
+
+	// With next.config.js
+	nextConfig := filepath.Join(tempDir, "next.config.js")
+	_ = os.WriteFile(nextConfig, []byte("module.exports = {};"), 0644)
+	if !hasRootAppFramework(tempDir) {
+		t.Errorf("expected next.config.js to indicate app framework")
+	}
+	_ = os.Remove(nextConfig)
+
+	// With package.json containing build script
+	pkgJSON := filepath.Join(tempDir, "package.json")
+	_ = os.WriteFile(pkgJSON, []byte(`{"scripts": {"build": "next build"}}`), 0644)
+	if !hasRootAppFramework(tempDir) {
+		t.Errorf("expected build script to indicate app framework")
+	}
+}
+
