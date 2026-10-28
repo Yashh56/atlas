@@ -205,9 +205,9 @@ func AuditWorkspace(root string, provider string, providerEnvKeys []string) (*Se
 	}
 
 	// 2. Scan source code in workspace root
-	_ = filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		if d.IsDir() {
 			if skipDirs[d.Name()] {
@@ -228,13 +228,17 @@ func AuditWorkspace(root string, provider string, providerEnvKeys []string) (*Se
 		relPath = filepath.ToSlash(relPath)
 
 		keys, scanErr := scanSourceFile(path)
-		if scanErr == nil {
-			for _, k := range keys {
-				addKeySource(keySources, k, relPath)
-			}
+		if scanErr != nil {
+			return scanErr
+		}
+		for _, k := range keys {
+			addKeySource(keySources, k, relPath)
 		}
 		return nil
 	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
 
 	// 3. Collect configured keys from .env files without reading values
 	envKeys := make(map[string]bool)
