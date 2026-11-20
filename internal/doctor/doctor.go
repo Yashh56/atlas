@@ -138,6 +138,9 @@ func checkTools(ctx context.Context, workspaceRoot string) CategoryReport {
 	}
 	cat.Checks = append(cat.Checks, dockerCheck)
 
+	// Railway CLI
+	cat.Checks = append(cat.Checks, checkOptionalExecutable(ctx, "railway", "--version"))
+
 	return cat
 }
 
@@ -168,16 +171,20 @@ func checkSecurity() CategoryReport {
 		}
 	}
 
-	providers := []string{"vercel", "render", "netlify"}
+	providers := []string{"vercel", "render", "netlify", "railway"}
 	envVars := map[string]string{
 		"vercel":  "VERCEL_TOKEN",
 		"render":  "RENDER_TOKEN",
 		"netlify": "NETLIFY_TOKEN",
+		"railway": "RAILWAY_API_TOKEN",
 	}
 
 	for _, p := range providers {
 		item := CheckItem{Name: title(p)}
-		if os.Getenv(envVars[p]) != "" {
+		if p == "railway" && os.Getenv("RAILWAY_TOKEN") != "" {
+			item.Status = StatusPass
+			item.Details = "Authenticated via RAILWAY_TOKEN"
+		} else if os.Getenv(envVars[p]) != "" {
 			item.Status = StatusPass
 			item.Details = fmt.Sprintf("Authenticated via %s", envVars[p])
 		} else if store != nil {

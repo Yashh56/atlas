@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,6 +30,84 @@ type Release struct {
 type Asset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+func parseSemver(v string) (major, minor, patch int, suffix string, ok bool) {
+	v = strings.TrimPrefix(v, "v")
+	v = strings.TrimPrefix(v, "V")
+
+	if idx := strings.IndexAny(v, "-+"); idx != -1 {
+		suffix = v[idx:]
+		v = v[:idx]
+	}
+
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return 0, 0, 0, "", false
+	}
+
+	var err error
+	major, err = strconv.Atoi(parts[0])
+	if err != nil || major < 0 {
+		return 0, 0, 0, "", false
+	}
+
+	minor, err = strconv.Atoi(parts[1])
+	if err != nil || minor < 0 {
+		return 0, 0, 0, "", false
+	}
+
+	patch, err = strconv.Atoi(parts[2])
+	if err != nil || patch < 0 {
+		return 0, 0, 0, "", false
+	}
+
+	return major, minor, patch, suffix, true
+}
+
+func isNewer(latest, current string) bool {
+	if current == "dev" {
+		return false
+	}
+
+	lMaj, lMin, lPatch, _, lOk := parseSemver(latest)
+	cMaj, cMin, cPatch, cSuffix, cOk := parseSemver(current)
+
+	if !lOk || !cOk {
+		if latest == current {
+			return false
+		}
+		return latest > current
+	}
+
+	if lMaj > cMaj {
+		return true
+	}
+	if lMaj < cMaj {
+		return false
+	}
+
+	if lMin > cMin {
+		return true
+	}
+	if lMin < cMin {
+		return false
+	}
+
+	if lPatch > cPatch {
+		return true
+	}
+	if lPatch < cPatch {
+		return false
+	}
+
+	// Base numbers equal: if current has git describe or dirty suffix (e.g. strings.HasPrefix(currentSuffix, "-") or "-dirty"),
+	// current is not older than latest release tag, return false.
+	if strings.HasPrefix(cSuffix, "-") || strings.Contains(cSuffix, "dirty") {
+		return false
+	}
+
+	return false
 }
 
 // CheckUpdate queries GitHub for the latest release and compares it with the current version.
@@ -54,10 +133,7 @@ func CheckUpdate(currentVersion string) (*Release, error) {
 		return nil, err
 	}
 
-	latestVersion := strings.TrimPrefix(rel.TagName, "v")
-	currVer := strings.TrimPrefix(currentVersion, "v")
-
-	if latestVersion != currVer {
+	if isNewer(rel.TagName, currentVersion) {
 		return &rel, nil
 	}
 	return nil, nil

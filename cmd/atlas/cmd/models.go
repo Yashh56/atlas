@@ -164,17 +164,7 @@ func runModels(_ *cobra.Command, _ []string) error {
 }
 
 func getProviderForModel(modelName string) string {
-	for _, p := range llmProviderEnvVars {
-		if p.Name == modelName {
-			return p.Name // fallback for legacy
-		}
-		for _, m := range p.Models {
-			if m == modelName {
-				return p.Name
-			}
-		}
-	}
-	return "local"
+	return llm.ProviderForModel(modelName)
 }
 
 func getLLMEnvVar(provider string) string {

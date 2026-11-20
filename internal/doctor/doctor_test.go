@@ -18,7 +18,8 @@ type testMockClient struct {
 	providerName string
 }
 
-func (m *testMockClient) Name() string { return m.providerName }
+func (m *testMockClient) Name() string    { return m.providerName }
+func (m *testMockClient) ModelID() string { return "test-model" }
 func (m *testMockClient) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	return "pong", nil
 }

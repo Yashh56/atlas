@@ -11,6 +11,11 @@ import (
 	"github.com/Yashh56/atlas/internal/llm"
 )
 
+var (
+	testLLMProvider string
+	testLLMModel    string
+)
+
 var testllmCmd = &cobra.Command{
 	Use:   "testllm <path>",
 	Short: "Test whether the configured LLM API key is valid",
@@ -19,34 +24,47 @@ var testllmCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := args[0]
 		configPath := filepath.Join(path, ".atlas", "config.json")
-		
+
 		cfg, err := config.Load(configPath)
 		if err != nil {
 			return fmt.Errorf("failed to load config at %s: %w", configPath, err)
 		}
-		
-		fmt.Printf("Testing LLM connection to provider: %s (model: %s)...\n", cfg.LLMProvider, cfg.DefaultModel)
-		
+
+		if testLLMProvider != "" {
+			cfg.LLMProvider = testLLMProvider
+		}
+		if testLLMModel != "" {
+			cfg.LLMProvider = testLLMModel
+			cfg.DefaultModel = testLLMModel
+		}
+
 		store, storeErr := credentials.Open()
 		if storeErr != nil {
 			fmt.Printf("⚠  Could not open credential store: %v\n", storeErr)
 		}
-		
+
 		client, err := llm.NewClient(cfg, store)
 		if err != nil {
-			return fmt.Errorf("failed to initialize LLM client: %w", err)
+			return fmt.Errorf("failed to initialize LLM client (%s / %s): %w", cfg.LLMProvider, cfg.DefaultModel, err)
 		}
-		
+
+		fmt.Printf("Testing LLM connection to provider: %s (model: %s)...\n", client.Name(), client.ModelID())
+
 		systemPrompt := "You are a test agent."
 		userPrompt := "Reply with exactly the word 'SUCCESS' if you receive this."
-		
+
 		resp, err := client.Complete(cmd.Context(), systemPrompt, userPrompt)
 		if err != nil {
 			return fmt.Errorf("API call failed: %w", err)
 		}
-		
+
 		fmt.Printf("LLM Response: %s\n", resp)
 		fmt.Println("✓ API key is active and connection is working!")
 		return nil
 	},
+}
+
+func init() {
+	testllmCmd.Flags().StringVar(&testLLMProvider, "provider", "", "LLM provider override")
+	testllmCmd.Flags().StringVar(&testLLMModel, "model", "", "LLM model override")
 }

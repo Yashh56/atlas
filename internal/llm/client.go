@@ -51,6 +51,50 @@ var KnownProviders = []ProviderSpec{
 	{Name: "local", EnvVar: "", DefaultModel: "llama3", Models: []string{}},
 }
 
+// ProviderForModel returns the canonical provider name for a given model or provider string.
+// It checks KnownProviders first, then known model prefixes.
+func ProviderForModel(modelName string) string {
+	for _, p := range KnownProviders {
+		if p.Name == modelName {
+			return p.Name
+		}
+		for _, m := range p.Models {
+			if m == modelName {
+				return p.Name
+			}
+		}
+	}
+
+	// Prefix matching fallbacks
+	if strings.HasPrefix(modelName, "claude") {
+		return "anthropic"
+	}
+	if strings.HasPrefix(modelName, "openai/gpt-oss") {
+		return "groq"
+	}
+	if strings.HasPrefix(modelName, "gpt-") || strings.HasPrefix(modelName, "o1-") || strings.HasPrefix(modelName, "o3-") {
+		return "openai"
+	}
+	if strings.HasPrefix(modelName, "gemini") {
+		return "gemini"
+	}
+	if strings.HasPrefix(modelName, "mistral") || strings.HasPrefix(modelName, "pixtral") ||
+		strings.HasPrefix(modelName, "codestral") || strings.HasPrefix(modelName, "devstral") {
+		return "mistral"
+	}
+	if strings.HasPrefix(modelName, "llama-") || strings.HasPrefix(modelName, "llama3-") || strings.HasPrefix(modelName, "mixtral-") {
+		return "groq"
+	}
+	if strings.HasPrefix(modelName, "grok") {
+		return "grok"
+	}
+	if strings.HasPrefix(modelName, "local") || modelName == "llama3" {
+		return "local"
+	}
+
+	return "local"
+}
+
 func HasProviderKey(provider string, store *credentials.Store) bool {
 	for _, p := range KnownProviders {
 		if p.Name == provider {
@@ -133,7 +177,7 @@ func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 		modelName = "claude-sonnet-5" // default when no provider configured
 	}
 
-	if (modelName == "claude-sonnet-5" || cfg.LLMProvider == "anthropic" || cfg.LLMProvider == "") && !HasProviderKey("anthropic", store) {
+	if (modelName == "claude-sonnet-5" || modelName == "claude-sonnet-4-6") && !HasProviderKey("anthropic", store) {
 		if detected, ok := DetectConfiguredProvider("", store); ok {
 			cfg.LLMProvider = detected.Name
 			modelName = detected.DefaultModel
@@ -150,7 +194,7 @@ func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 		return anthropic.Chat(modelName), nil
 	}
 
-	if strings.HasPrefix(modelName, "gpt-") || strings.HasPrefix(modelName, "o1-") {
+	if strings.HasPrefix(modelName, "gpt-") || strings.HasPrefix(modelName, "o1-") || strings.HasPrefix(modelName, "o3-") {
 		key, err := resolveAPIKey(store, "openai", "OPENAI_API_KEY")
 		if err != nil {
 			return nil, err
@@ -178,7 +222,7 @@ func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 		return mistral.Chat(modelName), nil
 	}
 
-	if cfg.LLMProvider == "groq" || ((strings.HasPrefix(modelName, "llama-") || strings.HasPrefix(modelName, "llama3-") || strings.HasPrefix(modelName, "mixtral-")) && cfg.LLMProvider != "local" && modelName != "llama3") {
+	if cfg.LLMProvider == "groq" || strings.HasPrefix(modelName, "openai/gpt-oss") || ProviderForModel(modelName) == "groq" || ((strings.HasPrefix(modelName, "llama-") || strings.HasPrefix(modelName, "llama3-") || strings.HasPrefix(modelName, "mixtral-")) && cfg.LLMProvider != "local" && modelName != "llama3") {
 		key, err := resolveAPIKey(store, "groq", "GROQ_API_KEY")
 		if err != nil {
 			return nil, err
@@ -230,6 +274,7 @@ func ResolveModel(cfg *config.Config, store *credentials.Store) (Model, error) {
 // Client covers plain-text completion — used anywhere structured output isn't needed.
 type Client interface {
 	Name() string
+	ModelID() string
 	Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 }
 
@@ -243,10 +288,12 @@ func NewClient(cfg *config.Config, store *credentials.Store) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &goaiClient{providerName: cfg.LLMProvider, model: model}, nil
+	return &goaiClient{providerName: ProviderForModel(cfg.LLMProvider), model: model}, nil
 }
 
 func (c *goaiClient) Name() string { return c.providerName }
+
+func (c *goaiClient) ModelID() string { return c.model.ModelID() }
 
 func (c *goaiClient) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	result, err := goai.GenerateText(ctx, c.model,
