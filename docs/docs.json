@@ -3,7 +3,10 @@
   "theme": "shiso",
   "name": "Atlas",
   "description": "Documentation for the Atlas autonomous deployment pipeline.",
-  "logo": "/logo.svg",
+  "logo": {
+    "light": "/logo-light.svg",
+    "dark": "/logo-dark.svg"
+  },
   "favicon": "/logo.svg",
   "pages": [
     {
@@ -30,6 +33,25 @@
       "icon": "rocket",
       "href": "/getting-started"
     }
+  },
+  "footer": {
+    "socials": [
+      {
+        "icon": "github",
+        "ariaLabel": "GitHub",
+        "href": "https://github.com/Yashh56/atlas"
+      },
+      {
+        "icon":"linkedin",
+        "ariaLabel":"linkedin",
+        "href":"https://www.linkedin.com/in/yash596/"
+      },
+      {
+        "icon":"discord",
+        "ariaLabel":"discord",
+        "href":"https://discord.com/users/568021861871517716"
+      }
+    ]
   },
   "search": {
     "prompt": "Search the docs...",
