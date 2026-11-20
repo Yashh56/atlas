@@ -94,7 +94,10 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 		".html": true, ".css": true, ".md": true,
 	}
 
+	const maxContextBytes = 12000
+
 	var fileContext string
+	var primaryFileContext string
 	loadedPaths := map[string]bool{}
 
 	// Always load ForceIncludeFile first — this is the file we previously modified,
@@ -102,7 +105,8 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 	if f.ForceIncludeFile != "" {
 		forceAbs := filepath.Join(f.WorkspaceRoot, f.ForceIncludeFile)
 		if content, err := os.ReadFile(forceAbs); err == nil {
-			fileContext = fmt.Sprintf("\nCurrent contents of %s (file previously modified — read carefully before proposing old_str):\n```\n%s\n```\n", f.ForceIncludeFile, string(content))
+			primaryFileContext = fmt.Sprintf("\nCurrent contents of %s (file previously modified — read carefully before proposing old_str):\n```\n%s\n```\n", f.ForceIncludeFile, string(content))
+			fileContext += primaryFileContext
 			loadedPaths[forceAbs] = true
 		}
 	}
@@ -112,15 +116,25 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 		absPath := filepath.Join(f.WorkspaceRoot, filePath)
 		contentBytes, err := os.ReadFile(absPath)
 		if err == nil {
-			fileContext = fmt.Sprintf("\nContents of %s:\n```\n%s\n```\n", filePath, string(contentBytes))
+			snippet := fmt.Sprintf("\nContents of %s:\n```\n%s\n```\n", filePath, string(contentBytes))
+			primaryFileContext += snippet
+			fileContext += snippet
 			loadedPaths[absPath] = true
 
 			// Load sibling source files from the same directory for immediate context
 			dirPath := filepath.Dir(absPath)
+			isRoot := filepath.Clean(dirPath) == filepath.Clean(f.WorkspaceRoot)
 			entries, dirErr := os.ReadDir(dirPath)
 			if dirErr == nil {
 				for _, entry := range entries {
+					if len(fileContext) >= maxContextBytes {
+						break
+					}
 					if entry.IsDir() {
+						// When dirPath is workspace root, do NOT recursively walk subdirectories (src, public, etc.)
+						if isRoot {
+							continue
+						}
 						// One level deep — walk into subdirectories to find package files
 						// (e.g. utils/utils.go) that the error might originate from.
 						skipDir := map[string]bool{
@@ -136,6 +150,9 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 							continue
 						}
 						for _, subEntry := range subEntries {
+							if len(fileContext) >= maxContextBytes {
+								break
+							}
 							if subEntry.IsDir() {
 								continue
 							}
@@ -169,14 +186,20 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 			}
 
 			// Always include package.json if this is a JS/TS/config file and we haven't already
-			pkgJSON := filepath.Join(f.WorkspaceRoot, "package.json")
-			if !loadedPaths[pkgJSON] {
-				if pkgBytes, pkgErr := os.ReadFile(pkgJSON); pkgErr == nil {
-					fileContext += fmt.Sprintf("\nContents of package.json:\n```\n%s\n```\n", string(pkgBytes))
-					loadedPaths[pkgJSON] = true
+			if len(fileContext) < maxContextBytes {
+				pkgJSON := filepath.Join(f.WorkspaceRoot, "package.json")
+				if !loadedPaths[pkgJSON] {
+					if pkgBytes, pkgErr := os.ReadFile(pkgJSON); pkgErr == nil {
+						fileContext += fmt.Sprintf("\nContents of package.json:\n```\n%s\n```\n", string(pkgBytes))
+						loadedPaths[pkgJSON] = true
+					}
 				}
 			}
 		}
+	}
+
+	if primaryFileContext == "" {
+		primaryFileContext = fileContext
 	}
 
 	userPrompt := fmt.Sprintf("Framework: %s\n\nBuild Log Excerpt:\n```\n%s\n```\n%s", framework, buildLog, fileContext)
@@ -200,6 +223,40 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 	var usage *provider.Usage
 	var genErr error
 
+	doMinimalRetry := func() (FixResponse, *provider.Usage, error) {
+		minimalUserPrompt := fmt.Sprintf("Framework: %s\n\nBuild Log Excerpt:\n```\n%s\n```\n%s", framework, buildLog, primaryFileContext)
+		retryPrompt := systemPrompt
+		if idx := strings.Index(retryPrompt, "Before proposing a fix"); idx != -1 {
+			retryPrompt = retryPrompt[:idx]
+		}
+		retryPrompt += "\n\nIMPORTANT: Output ONLY the raw JSON object, no markdown fences, no explanation. DO NOT CALL ANY TOOLS. YOU MUST OUTPUT THE JSON RESULT IMMEDIATELY.\nYour JSON object MUST conform EXACTLY to this structure:\n{\n  \"file\": \"path to the file to modify\",\n  \"old_str\": \"the exact characters to replace\",\n  \"new_str\": \"the exact characters to replace them with\",\n  \"reasoning\": \"brief explanation of the fix\"\n}"
+
+		retryCtx, retryCancel := context.WithTimeout(ctx, 60*time.Second)
+		defer retryCancel()
+
+		tRes, tErr := goai.GenerateText(retryCtx, f.Model,
+			goai.WithSystem(retryPrompt),
+			goai.WithPrompt(minimalUserPrompt),
+			goai.WithMaxSteps(1),
+		)
+		if tErr != nil {
+			return FixResponse{}, nil, fmt.Errorf("token or rate limit exhaustion: %w", tErr)
+		}
+
+		raw := strings.TrimSpace(tRes.Text)
+		sIdx := strings.Index(raw, "{")
+		eIdx := strings.LastIndex(raw, "}")
+		if sIdx != -1 && eIdx != -1 && eIdx > sIdx {
+			raw = raw[sIdx : eIdx+1]
+		}
+
+		var fRes FixResponse
+		if pErr := json.Unmarshal([]byte(raw), &fRes); pErr != nil {
+			return FixResponse{}, nil, fmt.Errorf("failed to parse minimal retry text as JSON: %w", pErr)
+		}
+		return fRes, &tRes.TotalUsage, nil
+	}
+
 	if !skipStructured {
 		llmCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
@@ -210,8 +267,17 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 			goai.WithTools(ToGoAITools(f.WorkspaceRoot)...),
 		)
 		if genErr != nil {
-			// Attempt to recover from a parsing error if the raw output is in the error message
-			if strings.Contains(genErr.Error(), "parsing structured output") && strings.Contains(genErr.Error(), "(raw:") {
+			if isTokenOrRateLimitError(genErr) {
+				fix, usage, genErr = doMinimalRetry()
+				if genErr != nil {
+					return ToolResult{
+						Success:  false,
+						Error:    genErr.Error(),
+						Duration: time.Since(start),
+					}, nil
+				}
+			} else if strings.Contains(genErr.Error(), "parsing structured output") && strings.Contains(genErr.Error(), "(raw:") {
+				// Attempt to recover from a parsing error if the raw output is in the error message
 				parts := strings.SplitN(genErr.Error(), "(raw:", 2)
 				if len(parts) == 2 {
 					rawJSON := strings.TrimSpace(strings.TrimSuffix(parts[1], ")"))
@@ -251,29 +317,41 @@ func (f FixCode) Execute(ctx context.Context, sess *session.Session) (ToolResult
 			goai.WithMaxSteps(1),
 		)
 		if textErr != nil {
-			return ToolResult{
-				Success:  false,
-				Error:    fmt.Sprintf("structured fallback (GenerateText) failed: %v", textErr),
-				Duration: time.Since(start),
-			}, nil
-		}
+			if isTokenOrRateLimitError(textErr) {
+				var retryErr error
+				fix, usage, retryErr = doMinimalRetry()
+				if retryErr != nil {
+					return ToolResult{
+						Success:  false,
+						Error:    retryErr.Error(),
+						Duration: time.Since(start),
+					}, nil
+				}
+			} else {
+				return ToolResult{
+					Success:  false,
+					Error:    fmt.Sprintf("structured fallback (GenerateText) failed: %v", textErr),
+					Duration: time.Since(start),
+				}, nil
+			}
+		} else {
+			// Clean markdown fences if the model ignored the instructions
+			rawJSON := strings.TrimSpace(textRes.Text)
+			startIdx := strings.Index(rawJSON, "{")
+			endIdx := strings.LastIndex(rawJSON, "}")
+			if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+				rawJSON = rawJSON[startIdx : endIdx+1]
+			}
 
-		// Clean markdown fences if the model ignored the instructions
-		rawJSON := strings.TrimSpace(textRes.Text)
-		startIdx := strings.Index(rawJSON, "{")
-		endIdx := strings.LastIndex(rawJSON, "}")
-		if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
-			rawJSON = rawJSON[startIdx : endIdx+1]
+			if parseErr := json.Unmarshal([]byte(rawJSON), &fix); parseErr != nil {
+				return ToolResult{
+					Success:  false,
+					Error:    fmt.Sprintf("failed to parse fallback text as JSON: %v", parseErr),
+					Duration: time.Since(start),
+				}, nil
+			}
+			usage = &textRes.TotalUsage
 		}
-
-		if parseErr := json.Unmarshal([]byte(rawJSON), &fix); parseErr != nil {
-			return ToolResult{
-				Success:  false,
-				Error:    fmt.Sprintf("failed to parse fallback text as JSON: %v", parseErr),
-				Duration: time.Since(start),
-			}, nil
-		}
-		usage = &textRes.TotalUsage
 	} else if genErr != nil {
 		// Structured generation failed with an unrecognized error — surface it.
 		return ToolResult{
@@ -363,4 +441,17 @@ func extractFilePath(log string) string {
 		return path
 	}
 	return ""
+}
+
+func isTokenOrRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Request too large") ||
+		strings.Contains(msg, "Limit 8000") ||
+		strings.Contains(msg, "TPM") ||
+		strings.Contains(msg, "tokens per minute") ||
+		strings.Contains(msg, "Rate limit") ||
+		strings.Contains(msg, "rate_limit")
 }

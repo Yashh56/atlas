@@ -19,6 +19,7 @@ import (
 	"github.com/Yashh56/atlas/internal/credentials"
 	"github.com/Yashh56/atlas/internal/deploy"
 	"github.com/Yashh56/atlas/internal/deploy/netlify"
+	"github.com/Yashh56/atlas/internal/deploy/railway"
 	"github.com/Yashh56/atlas/internal/deploy/render"
 	"github.com/Yashh56/atlas/internal/deploy/vercel"
 	"github.com/Yashh56/atlas/internal/llm"
@@ -293,6 +294,7 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 		registry.Register(&vercel.VercelProvider{})
 		registry.Register(&render.RenderProvider{})
 		registry.Register(&netlify.NetlifyProvider{})
+		registry.Register(&railway.RailwayProvider{})
 
 		var ok bool
 		provider, ok = registry.Get(providerName)
@@ -324,6 +326,14 @@ func executeSetup(ctx context.Context, workspacePath, providerName string, opts 
 			}
 			if authErr := netlify.EnsureNetlifyAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
 				err = fmt.Errorf("Netlify auth failed: %w", authErr)
+				return
+			}
+		case "railway":
+			if !opts.JSONMode {
+				fmt.Printf("%s Checking Railway authentication...\n", styleArrow)
+			}
+			if authErr := railway.EnsureRailwayAuth(ctx, store, cfg, deploy.OSCommandRunner{}); authErr != nil {
+				err = fmt.Errorf("Railway auth failed: %w", authErr)
 				return
 			}
 		}
@@ -581,8 +591,11 @@ func executeBuildLoop(
 	var prevBuildErrorSig string
 	var patchApplied bool
 	stuckCount := 0
-	llmFixAttempts := 0         // total LLM calls made (capped separately from build attempts)
-	const maxLLMFixes = 30      // hard ceiling on LLM invocations regardless of build count
+	totalBuildAttempts := 0
+	const maxTotalBuildAttempts = 5
+	totalLLMFixes := 0
+	const maxTotalLLMFixes = 8
+	const maxLLMFixes = 4
 	var lastPatchError string   // last patch-application error to pass to the next LLM call
 	var forceIncludeFile string // file most recently targeted by a fix; always included in next LLM prompt
 
@@ -608,11 +621,28 @@ func executeBuildLoop(
 		}
 		tools.RunCommand{Command: "go", Args: []string{"mod", "tidy"}, Dir: ws.Root}.Execute(ctx, sess)
 		tools.RunCommand{Command: "go", Args: []string{"mod", "download"}, Dir: ws.Root}.Execute(ctx, sess)
-	} else if framework == "node" && packageManager != "" {
-		if !opts.JSONMode {
-			fmt.Printf("%s Installing dependencies (%s install)...\n", styleArrow, packageManager)
+	}
+
+	pkgPath := filepath.Join(ws.Root, "package.json")
+	if _, err := os.Stat(pkgPath); err == nil && packageManager != "" {
+		nodeModulesPath := filepath.Join(ws.Root, "node_modules")
+		if _, err := os.Stat(nodeModulesPath); os.IsNotExist(err) {
+			if !opts.JSONMode {
+				fmt.Printf("%s node_modules not found. Installing dependencies (%s install)...\n", styleArrow, packageManager)
+			}
+			res, cmdErr := tools.RunCommand{Command: packageManager, Args: []string{"install"}, Dir: ws.Root}.Execute(ctx, sess)
+			if cmdErr != nil {
+				return fmt.Errorf("failed to install dependencies: %w", cmdErr)
+			}
+			if !res.Success {
+				return fmt.Errorf("failed to install dependencies: %s", res.Error)
+			}
+		} else if framework == "node" {
+			if !opts.JSONMode {
+				fmt.Printf("%s Installing dependencies (%s install)...\n", styleArrow, packageManager)
+			}
+			tools.RunCommand{Command: packageManager, Args: []string{"install"}, Dir: ws.Root}.Execute(ctx, sess)
 		}
-		tools.RunCommand{Command: packageManager, Args: []string{"install"}, Dir: ws.Root}.Execute(ctx, sess)
 	} else if framework == "python" || framework == "django" || framework == "fastapi" || framework == "flask" {
 		reqPath := filepath.Join(ws.Root, "requirements.txt")
 		if _, err := os.Stat(reqPath); os.IsNotExist(err) {
@@ -647,6 +677,15 @@ func executeBuildLoop(
 	}
 
 	for {
+		totalBuildAttempts++
+		if totalBuildAttempts > maxTotalBuildAttempts {
+			fmt.Printf("%s Exhausted total build limit (%d attempts). Escalating and reverting changes...\n", styleArrow, maxTotalBuildAttempts)
+			revertBackups(ws.Root, sessDir)
+			planner.CurrentStep = "escalated"
+			_ = SavePlanner(sessDir, planner)
+			return fmt.Errorf("build failed and reached maximum total build attempts (%d)", maxTotalBuildAttempts)
+		}
+
 		planner.CurrentStep = "run_build_command"
 		_ = SavePlanner(sessDir, planner)
 
@@ -776,8 +815,13 @@ func executeBuildLoop(
 			}
 		}
 
-		if framework == "node" && packageManager != "" && (strings.Contains(errorMsg, "Cannot find module") || strings.Contains(errorMsg, "npm ERR! missing script")) {
-			fmt.Printf("%s Missing dependencies detected. Running '%s install'...\n", styleArrow, packageManager)
+		if packageManager != "" && (strings.Contains(errorMsg, "Cannot find module") ||
+			strings.Contains(errorMsg, "npm ERR! missing script") ||
+			strings.Contains(errorMsg, "is not recognized as an internal or external command") ||
+			strings.Contains(errorMsg, "command not found") ||
+			strings.Contains(errorMsg, "ELIFECYCLE") ||
+			strings.Contains(errorMsg, "vite: not found")) {
+			fmt.Printf("%s Missing dependencies or CLI binary detected. Running '%s install'...\n", styleArrow, packageManager)
 			installCmd := tools.RunCommand{Command: packageManager, Args: []string{"install"}, Dir: ws.Root}
 			installRes, _ := installCmd.Execute(ctx, sess)
 			if installRes.Success {
@@ -800,7 +844,7 @@ func executeBuildLoop(
 		if currentSig != prevBuildErrorSig {
 			prevBuildErrorSig = currentSig
 			stuckCount = 0
-			if retry.Count > 1 {
+			if retry.Count > 1 && totalBuildAttempts < maxTotalBuildAttempts {
 				retry.Count = 1
 				planner.Retries["fix_and_rebuild"] = retry
 			}
@@ -831,7 +875,8 @@ func executeBuildLoop(
 		// Patch failures (old_str not found) do NOT consume a build retry — only actual
 		// failed builds count toward retry.Max. The LLM ceiling (maxLLMFixes) is the
 		// safety valve against infinite LLM loops.
-		for llmFixAttempts < maxLLMFixes {
+		llmFixAttempts := 0
+		for llmFixAttempts < maxLLMFixes && totalLLMFixes < maxTotalLLMFixes {
 			fmt.Printf("%s Attempting automatic fix...\n", styleArrow)
 			planner.CurrentStep = "fix_code"
 			_ = SavePlanner(sessDir, planner)
@@ -849,6 +894,7 @@ func executeBuildLoop(
 				return fmt.Errorf("orchestrator: fix_code: %w", err)
 			}
 			llmFixAttempts++
+			totalLLMFixes++
 			planner.AddUsage(fixRes.TokenUsage)
 
 			if fixRes.Success {
@@ -871,6 +917,14 @@ func executeBuildLoop(
 			}
 			fmt.Printf("  Fix attempt failed (retrying LLM): %s\n\n", fixRes.Error)
 			continue
+		}
+
+		if (llmFixAttempts >= maxLLMFixes || totalLLMFixes >= maxTotalLLMFixes) && !patchApplied {
+			fmt.Printf("%s Fix attempts exhausted without applying a valid patch. Escalating and reverting...\n", styleWarn)
+			revertBackups(ws.Root, sessDir)
+			planner.CurrentStep = "escalated"
+			_ = SavePlanner(sessDir, planner)
+			return fmt.Errorf("build failed and exhausted fix attempts. reverted using file snapshots")
 		}
 
 		fmt.Printf("%s Rebuilding...\n", styleArrow)

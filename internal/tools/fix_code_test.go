@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Yashh56/atlas/internal/session"
@@ -299,5 +300,155 @@ func TestFixCode_WorkspaceSkillOverride(t *testing.T) {
 	}
 	if !res.Success {
 		t.Fatalf("expected success with workspace skill override, got error: %s", res.Error)
+	}
+}
+
+type fakeInspectModel struct {
+	fn func(params provider.GenerateParams) (*provider.GenerateResult, error)
+}
+
+func (f *fakeInspectModel) ModelID() string { return "fake-inspect-model" }
+
+func (f *fakeInspectModel) DoGenerate(_ context.Context, params provider.GenerateParams) (*provider.GenerateResult, error) {
+	if f.fn != nil {
+		return f.fn(params)
+	}
+	return &provider.GenerateResult{Text: `{"file":"main.go","old_str":"a","new_str":"b"}`, FinishReason: provider.FinishStop}, nil
+}
+
+func (f *fakeInspectModel) DoStream(_ context.Context, _ provider.GenerateParams) (*provider.StreamResult, error) {
+	return nil, nil
+}
+
+func TestFixCode_ContextBudget_SkipsSubdirectoriesInWorkspaceRoot(t *testing.T) {
+	ws := t.TempDir()
+	sessDir := filepath.Join(ws, ".atlas", "sessions", "test_sess")
+	os.MkdirAll(filepath.Join(sessDir, "logs"), 0o755)
+
+	state.SaveJSON(sessDir, "project.json", map[string]interface{}{"framework": "react"})
+	logPath := filepath.Join(sessDir, "logs", "build.log")
+	os.WriteFile(logPath, []byte("package.json:2: invalid json"), 0o644)
+	state.SaveJSON(sessDir, "build.json", map[string]interface{}{"log_path": logPath})
+
+	os.WriteFile(filepath.Join(ws, "package.json"), []byte(`{"name": "root-app"}`), 0o644)
+
+	srcDir := filepath.Join(ws, "src")
+	os.MkdirAll(srcDir, 0o755)
+	os.WriteFile(filepath.Join(srcDir, "App.tsx"), []byte("UNIQUE_TOKEN_APP_SHOULD_BE_SKIPPED"), 0o644)
+
+	promptSawAppFile := false
+	inspectModel := &fakeInspectModel{
+		fn: func(params provider.GenerateParams) (*provider.GenerateResult, error) {
+			for _, m := range params.Messages {
+				for _, part := range m.Content {
+					if strings.Contains(part.Text, "UNIQUE_TOKEN_APP_SHOULD_BE_SKIPPED") {
+						promptSawAppFile = true
+					}
+				}
+			}
+			return &provider.GenerateResult{
+				Text:         `{"file": "package.json", "old_str": "root-app", "new_str": "fixed-app", "reasoning": "fixed"}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	tool := tools.FixCode{
+		WorkspaceRoot: ws,
+		Model:         inspectModel,
+		SessionDir:    sessDir,
+	}
+
+	res, err := tool.Execute(context.Background(), &session.Session{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+	if promptSawAppFile {
+		t.Errorf("expected App.tsx in subdirectory to be skipped when target is in root dir, but it was included in prompt")
+	}
+}
+
+func TestFixCode_TokenOrRateLimitRetry(t *testing.T) {
+	ws := t.TempDir()
+	sessDir := filepath.Join(ws, ".atlas", "sessions", "test_sess")
+	os.MkdirAll(filepath.Join(sessDir, "logs"), 0o755)
+
+	state.SaveJSON(sessDir, "project.json", map[string]interface{}{"framework": "react"})
+	logPath := filepath.Join(sessDir, "logs", "build.log")
+	os.WriteFile(logPath, []byte("package.json:2: syntax error"), 0o644)
+	state.SaveJSON(sessDir, "build.json", map[string]interface{}{"log_path": logPath})
+
+	os.WriteFile(filepath.Join(ws, "package.json"), []byte(`{"name": "test-app"}`), 0o644)
+
+	calls := 0
+	inspectModel := &fakeInspectModel{
+		fn: func(params provider.GenerateParams) (*provider.GenerateResult, error) {
+			calls++
+			if calls == 1 {
+				// First call fails with rate limit / token limit
+				return nil, fmt.Errorf("Request too large for model `openai/gpt-oss-120b` on tokens per minute (TPM): Limit 8000, Requested 8500")
+			}
+			// Second retry call succeeds
+			return &provider.GenerateResult{
+				Text:         `{"file": "package.json", "old_str": "test-app", "new_str": "fixed-app", "reasoning": "fixed"}`,
+				FinishReason: provider.FinishStop,
+			}, nil
+		},
+	}
+
+	tool := tools.FixCode{
+		WorkspaceRoot: ws,
+		Model:         inspectModel,
+		SessionDir:    sessDir,
+	}
+
+	res, err := tool.Execute(context.Background(), &session.Session{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success after rate limit retry, got: %s", res.Error)
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 calls (1 failure + 1 minimal retry), got: %d", calls)
+	}
+}
+
+func TestFixCode_TokenOrRateLimitExhaustion(t *testing.T) {
+	ws := t.TempDir()
+	sessDir := filepath.Join(ws, ".atlas", "sessions", "test_sess")
+	os.MkdirAll(filepath.Join(sessDir, "logs"), 0o755)
+
+	state.SaveJSON(sessDir, "project.json", map[string]interface{}{"framework": "react"})
+	logPath := filepath.Join(sessDir, "logs", "build.log")
+	os.WriteFile(logPath, []byte("package.json:2: syntax error"), 0o644)
+	state.SaveJSON(sessDir, "build.json", map[string]interface{}{"log_path": logPath})
+
+	os.WriteFile(filepath.Join(ws, "package.json"), []byte(`{"name": "test-app"}`), 0o644)
+
+	inspectModel := &fakeInspectModel{
+		fn: func(params provider.GenerateParams) (*provider.GenerateResult, error) {
+			return nil, fmt.Errorf("Request too large: Limit 8000 TPM")
+		},
+	}
+
+	tool := tools.FixCode{
+		WorkspaceRoot: ws,
+		Model:         inspectModel,
+		SessionDir:    sessDir,
+	}
+
+	res, err := tool.Execute(context.Background(), &session.Session{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Success {
+		t.Fatalf("expected failure on rate limit exhaustion")
+	}
+	if !strings.Contains(res.Error, "token or rate limit exhaustion") {
+		t.Errorf("expected error to contain 'token or rate limit exhaustion', got: %s", res.Error)
 	}
 }
