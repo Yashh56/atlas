@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -35,17 +36,26 @@ var (
 	jsonFlag           bool
 )
 
-// supportedProviders contains deployment providers supported in v0.2.0.
+// supportedProviders contains deployment providers supported in v0.2.0+.
 var supportedProviders = map[string]bool{
 	"vercel":  true,
 	"render":  true,
 	"netlify": true,
+	"railway": true,
 }
 
 // plannedProviders are roadmapped providers scheduled for v0.3.0.
 var plannedProviders = map[string]bool{
-	"fly":     true,
-	"railway": true,
+	"fly": true,
+}
+
+func formatSupportedProviders() string {
+	keys := make([]string, 0, len(supportedProviders))
+	for k := range supportedProviders {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
 }
 
 var rootCmd = &cobra.Command{
@@ -263,12 +273,13 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	if deployProvider != "" {
 		pLower := strings.ToLower(deployProvider)
 		if plannedProviders[pLower] {
-			return fmt.Errorf("provider %q is planned for v0.3.0 and not yet supported. Supported providers: netlify, render, vercel", deployProvider)
+			return fmt.Errorf("provider %q is planned for v0.3.0 and not yet supported. Supported providers: %s", deployProvider, formatSupportedProviders())
 		}
 		if !supportedProviders[pLower] {
 			return fmt.Errorf(
-				"unknown provider %q — supported providers: netlify, render, vercel",
+				"unknown provider %q — supported providers: %s",
 				deployProvider,
+				formatSupportedProviders(),
 			)
 		}
 	}

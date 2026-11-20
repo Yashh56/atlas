@@ -1,0 +1,56 @@
+---
+title: Railway Provider
+description: Deploying backend services, full-stack apps, and databases to Railway.
+---
+
+# Railway Deployment Provider
+
+Atlas supports triggering deployments for web services, APIs, and databases hosted on [Railway](https://railway.app/).
+
+## Pre-requisites
+
+Atlas manages your Railway deployments through the Railway CLI (`railway`). Atlas will verify CLI installation and prompt you to install it if it is not present in your PATH. Atlas detects your system package managers and prioritizes native installers:
+- **Windows**: `scoop install railway` (or `winget install --id Railway.Railway -e`)
+- **macOS / Linux**: `brew install railway`
+- **Fallback**: `npm install -g @railway/cli`
+
+## Configuration
+
+### 1. Authentication
+Railway authentication supports both environment tokens and interactive CLI login sessions:
+
+- **Project Token (`RAILWAY_TOKEN`)**: Recommended for CI/CD environments where builds are scoped to a single Railway project.
+- **Workspace/Account Token (`RAILWAY_API_TOKEN`)**: Used for workspace-level project creation.
+- **Stored Credentials**: Store your personal Railway token securely in your local OS keychain:
+  ```bash
+  atlas providers set railway
+  ```
+- **CLI Session**: If no token is provided, Atlas leverages your active `railway login` session. If unauthenticated, Atlas will invoke interactive login (or `railway login --browserless` in headless terminals).
+
+### 2. Project Linking & Service Configuration
+When deploying a project for the first time:
+1. Atlas checks if your directory is linked to a Railway project via `railway status`.
+2. If unlinked, Atlas initializes a project deterministically via `railway init -n <project-name>` (or links to an existing project if `railway_project_id` is present in `.atlas/project.json`).
+3. If your project requires a database (e.g., Django services or services with `requires_database: true`), Atlas provisions a PostgreSQL database via `railway add --database postgres`.
+4. The resolved `railway_project_id` and `railway_service_id` are saved to `.atlas/project.json` for seamless subsequent deployments.
+
+## Usage
+
+To trigger a deployment, run:
+
+```bash
+atlas /path/to/project --action deploy --provider railway
+```
+
+### Public Domains & Health Checks
+Railway services do not expose public endpoints by default. During deployment, Atlas:
+1. Deploys your code with `railway up --detach`.
+2. Runs `railway domain` to auto-provision an active `*.up.railway.app` public domain.
+3. Performs synthetic HTTP health checks against the live domain to verify application startup.
+
+### Rollback & Log Streaming
+- If a post-deployment health check fails, Atlas prompts you to rollback to your `LastHealthyDeployment` by triggering `railway redeploy`.
+- You can inspect real-time application logs using:
+  ```bash
+  atlas logs --provider railway
+  ```

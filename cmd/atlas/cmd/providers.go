@@ -45,7 +45,7 @@ var providersResetCmd = &cobra.Command{
 	RunE:  runProvidersReset,
 }
 
-var implementedProviders = [3]string{"vercel", "render", "netlify"}
+var implementedProviders = [4]string{"vercel", "render", "netlify", "railway"}
 
 func init() {
 	providersSetCmd.Flags().String("service-id", "", "Render service ID for the current project")
@@ -82,6 +82,16 @@ func runProviders(cmd *cobra.Command, _ []string) error {
 
 		var statuses []ProviderStatusJSON
 		for _, p := range providers {
+			if p == "railway" && os.Getenv("RAILWAY_TOKEN") != "" {
+				statuses = append(statuses, ProviderStatusJSON{
+					Provider:      p,
+					Authenticated: true,
+					Method:        string(credentials.MethodEnvVar),
+					EnvVar:        "RAILWAY_TOKEN",
+				})
+				continue
+			}
+
 			envVar := envVars[p]
 			if os.Getenv(envVar) != "" {
 				statuses = append(statuses, ProviderStatusJSON{
@@ -139,6 +149,10 @@ func printProviderStatus(name, envVar string, store *credentials.Store) {
 	pad := strings.Repeat(" ", colWidth-len(name))
 
 	// 1. Check env var first.
+	if name == "railway" && os.Getenv("RAILWAY_TOKEN") != "" {
+		fmt.Printf("  %s%s%s authenticated   (env_var, RAILWAY_TOKEN)\n", cliutil.StyleHighlight.Render(name), pad, cliutil.IconSuccess)
+		return
+	}
 	if os.Getenv(envVar) != "" {
 		fmt.Printf("  %s%s%s authenticated   (env_var, %s)\n", cliutil.StyleHighlight.Render(name), pad, cliutil.IconSuccess, envVar)
 		return

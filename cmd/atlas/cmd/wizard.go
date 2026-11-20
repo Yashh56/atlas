@@ -376,7 +376,7 @@ func (m *wizardModel) updateProviderSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "enter" {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
-				if i.title != "vercel" && i.title != "render" && i.title != "netlify" {
+				if i.title != "vercel" && i.title != "render" && i.title != "netlify" && i.title != "railway" {
 					return m, nil
 				}
 				m.selectedProvider = i.title
@@ -387,7 +387,7 @@ func (m *wizardModel) updateProviderSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.step = stepVercelConfirm
 					return m, nil
 				}
-				// For render and netlify, if not configured, we just advance and let the CLI prompt.
+				// For render, netlify, and railway, if not configured, we just advance and let the CLI prompt.
 				return m, func() tea.Msg { return advanceStepMsg{} }
 			}
 		}
@@ -482,7 +482,7 @@ func createModelList(store *credentials.Store) list.Model {
 }
 
 func createProviderList(store *credentials.Store) list.Model {
-	providers := []string{"vercel", "render", "netlify"}
+	providers := []string{"vercel", "render", "netlify", "railway"}
 	items := make([]list.Item, 0, len(providers))
 
 	for _, p := range providers {
@@ -494,9 +494,11 @@ func createProviderList(store *credentials.Store) list.Model {
 			envVar = "RENDER_TOKEN"
 		} else if p == "netlify" {
 			envVar = "NETLIFY_TOKEN"
+		} else if p == "railway" {
+			envVar = "RAILWAY_API_TOKEN"
 		}
 
-		if envVar != "" && os.Getenv(envVar) != "" {
+		if (p == "railway" && os.Getenv("RAILWAY_TOKEN") != "") || (envVar != "" && os.Getenv(envVar) != "") {
 			status = "✓ ENV var detected"
 		} else if envVar != "" && store != nil {
 			if meta, ok, _ := store.GetMeta(p); ok {

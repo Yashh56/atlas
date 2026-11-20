@@ -73,12 +73,24 @@ func EnsureCLIInstalled(
 ) error {
 	_, lookErr := runner.LookPath(cliName)
 	if lookErr != nil {
-		// CLI not found — check if npm/node are available first.
-		_, npmErr := runner.LookPath("npm")
-		_, nodeErr := runner.LookPath("node")
-		if npmErr != nil || nodeErr != nil {
-			return fmt.Errorf("%s CLI not found, and npm/node are also not found.\n"+
-				"  Install Node.js first: https://nodejs.org, then run: %s", cliName, strings.Join(installCommand, " "))
+		if len(installCommand) == 0 {
+			return fmt.Errorf("%s CLI not found and no installation command provided", cliName)
+		}
+		installerBin := installCommand[0]
+		if _, err := runner.LookPath(installerBin); err != nil {
+			if installerBin == "npm" {
+				return fmt.Errorf("%s CLI not found, and npm/node are also not found.\n"+
+					"  Install Node.js first: https://nodejs.org, then run: %s", cliName, strings.Join(installCommand, " "))
+			}
+			return fmt.Errorf("%s CLI not found, and installer %s is not installed.\n"+
+				"  Install %s first or run: %s", cliName, installerBin, installerBin, strings.Join(installCommand, " "))
+		}
+		if installerBin == "npm" {
+			_, nodeErr := runner.LookPath("node")
+			if nodeErr != nil {
+				return fmt.Errorf("%s CLI not found, and npm/node are also not found.\n"+
+					"  Install Node.js first: https://nodejs.org, then run: %s", cliName, strings.Join(installCommand, " "))
+			}
 		}
 		titleName := strings.Title(cliName)
 		fmt.Fprintf(stdout, "  %s CLI not found. Install it now? (%s) [y/N]\n", titleName, strings.Join(installCommand, " "))

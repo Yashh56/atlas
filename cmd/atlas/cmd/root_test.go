@@ -80,17 +80,12 @@ func TestProviderValidation(t *testing.T) {
 		{
 			name:      "planned provider fly fails fast",
 			args:      []string{"--path", ".", "--model", "openai", "--action", "deploy", "--provider", "fly"},
-			wantError: `provider "fly" is planned for v0.3.0 and not yet supported. Supported providers: netlify, render, vercel`,
-		},
-		{
-			name:      "planned provider railway fails fast",
-			args:      []string{"--path", ".", "--model", "openai", "--action", "deploy", "--provider", "railway"},
-			wantError: `provider "railway" is planned for v0.3.0 and not yet supported. Supported providers: netlify, render, vercel`,
+			wantError: `provider "fly" is planned for v0.3.0 and not yet supported. Supported providers: netlify, railway, render, vercel`,
 		},
 		{
 			name:      "unknown provider fails fast",
 			args:      []string{"--path", ".", "--model", "openai", "--action", "deploy", "--provider", "unknown"},
-			wantError: `unknown provider "unknown" — supported providers: netlify, render, vercel`,
+			wantError: `unknown provider "unknown" — supported providers: netlify, railway, render, vercel`,
 		},
 	}
 
