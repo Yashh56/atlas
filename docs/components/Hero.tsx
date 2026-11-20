@@ -6,8 +6,8 @@ export function InstallCommand() {
   const [copied, setCopied] = useState(false);
 
   const commands = {
-    mac: "curl -fsSL https://atlas.yashh56.me/install.sh | sh",
-    windows: "iwr -useb https://atlas.yashh56.me/install.ps1 | iex",
+    mac: "curl -fsSL https://atlas.yashh56.dev/install.sh | sh",
+    windows: "iwr -useb https://atlas.yashh56.dev/install.ps1 | iex",
     go: "go install github.com/Yashh56/atlas/cmd/atlas@latest",
   };
 

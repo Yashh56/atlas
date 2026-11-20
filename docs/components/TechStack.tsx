@@ -37,7 +37,12 @@ export function TechStack() {
       ready: true,
     },
     {
-      name: "Fly.io & Railway",
+      name: "Railway",
+      desc: "Full-stack deployments with PostgreSQL and Redis",
+      ready: true,
+    },
+    {
+      name: "Fly.io",
       desc: "Containerized deployments and microservices",
       ready: false,
     },
